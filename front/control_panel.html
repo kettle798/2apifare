@@ -3961,9 +3961,12 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
             try {
                 showStatus('正在生成 Antigravity 认证链接...', 'info');
 
+                const headers = getAuthHeaders();
+                headers['Content-Type'] = 'application/json';
+
                 const response = await fetch('/antigravity/auth/start', {
                     method: 'POST',
-                    headers: getAuthHeaders(),
+                    headers: headers,
                     body: JSON.stringify({
                         redirect_uri: 'http://localhost:8080/oauth-callback'
                     })
@@ -4012,9 +4015,12 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
             try {
                 showStatus('正在处理 Antigravity 认证...', 'info');
 
+                const headers = getAuthHeaders();
+                headers['Content-Type'] = 'application/json';
+
                 const response = await fetch('/antigravity/auth/exchange', {
                     method: 'POST',
-                    headers: getAuthHeaders(),
+                    headers: headers,
                     body: JSON.stringify({
                         callback_url: callbackUrl
                     })
