@@ -271,83 +271,77 @@ class IPManager:
 
         # 尝试使用免费 API 查询
         try:
-            import aiohttp
-            import asyncio
+            import httpx
 
             # 方案1: IP-API.com (支持中文，45次/分钟)
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(
-                        f"http://ip-api.com/json/{ip}?lang=zh-CN&fields=status,country,regionName,city,isp",
-                        timeout=aiohttp.ClientTimeout(total=3),
-                    ) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            if data.get("status") == "success":
-                                country = data.get("country", "")
-                                region = data.get("regionName", "")
-                                city = data.get("city", "")
-                                isp = data.get("isp", "")
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    response = await client.get(
+                        f"http://ip-api.com/json/{ip}?lang=zh-CN&fields=status,country,regionName,city,isp"
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get("status") == "success":
+                            country = data.get("country", "")
+                            region = data.get("regionName", "")
+                            city = data.get("city", "")
+                            isp = data.get("isp", "")
 
-                                # 组合地址
-                                parts = [p for p in [country, region, city] if p]
-                                location = " ".join(parts)
+                            # 组合地址
+                            parts = [p for p in [country, region, city] if p]
+                            location = " ".join(parts)
 
-                                if isp:
-                                    location += f" ({isp})"
+                            if isp:
+                                location += f" ({isp})"
 
-                                return location if location else "未知位置"
+                            return location if location else "未知位置"
             except Exception as e:
                 log.debug(f"IP-API.com query failed: {e}")
 
             # 方案2: IPWho.org (备用)
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(
-                        f"https://ipwho.is/{ip}",
-                        timeout=aiohttp.ClientTimeout(total=3),
-                    ) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            if data.get("success"):
-                                country = data.get("country", "")
-                                region = data.get("region", "")
-                                city = data.get("city", "")
-                                connection = data.get("connection", {})
-                                isp = connection.get("isp", "")
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    response = await client.get(f"https://ipwho.is/{ip}")
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get("success"):
+                            country = data.get("country", "")
+                            region = data.get("region", "")
+                            city = data.get("city", "")
+                            connection = data.get("connection", {})
+                            isp = connection.get("isp", "")
 
-                                parts = [p for p in [country, region, city] if p]
-                                location = " ".join(parts)
+                            parts = [p for p in [country, region, city] if p]
+                            location = " ".join(parts)
 
-                                if isp:
-                                    location += f" ({isp})"
+                            if isp:
+                                location += f" ({isp})"
 
-                                return location if location else "未知位置"
+                            return location if location else "未知位置"
             except Exception as e:
                 log.debug(f"IPWho.org query failed: {e}")
 
             # 方案3: 太平洋网络 (国内备用，仅查询国内 IP 效果好)
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(
-                        f"http://whois.pconline.com.cn/ipJson.jsp?ip={ip}&json=true",
-                        timeout=aiohttp.ClientTimeout(total=3),
-                    ) as response:
-                        if response.status == 200:
-                            # 注意：这个 API 返回的是 GB2312 编码
-                            text = await response.text(encoding="gb2312")
-                            # 简单解析 JSON
-                            import json
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    response = await client.get(
+                        f"http://whois.pconline.com.cn/ipJson.jsp?ip={ip}&json=true"
+                    )
+                    if response.status_code == 200:
+                        # 注意：这个 API 返回的是 GB2312 编码
+                        text = response.text
+                        # 简单解析 JSON
+                        import json
 
-                            data = json.loads(text)
-                            pro = data.get("pro", "")
-                            city = data.get("city", "")
-                            addr = data.get("addr", "")
+                        data = json.loads(text)
+                        pro = data.get("pro", "")
+                        city = data.get("city", "")
+                        addr = data.get("addr", "")
 
-                            parts = [p for p in [pro, city, addr] if p and p != "XX"]
-                            location = " ".join(parts)
+                        parts = [p for p in [pro, city, addr] if p and p != "XX"]
+                        location = " ".join(parts)
 
-                            return location if location else "未知位置"
+                        return location if location else "未知位置"
             except Exception as e:
                 log.debug(f"Pconline query failed: {e}")
 
