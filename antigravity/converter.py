@@ -7,6 +7,12 @@ import uuid
 import random
 from typing import Dict, Any, List, Optional
 
+# 导入默认安全设置
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import DEFAULT_SAFETY_SETTINGS
+
 
 def generate_request_id() -> str:
     """生成请求 ID"""
@@ -331,6 +337,7 @@ def generate_request_body(
                 }
             },
             'generationConfig': generate_generation_config(parameters, enable_thinking, actual_model_name),
+            'safetySettings': DEFAULT_SAFETY_SETTINGS,  # 添加安全设置，全部关闭过滤
             'sessionId': generate_session_id()
         },
         'model': actual_model_name,

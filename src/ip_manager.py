@@ -30,6 +30,8 @@ class IPManager:
         self._cache_lock = asyncio.Lock()
         self._cache_dirty = False
         self._initialized = False
+        # 封禁操作记录文件路径（不再使用内存存储）
+        self._ban_operations_file = None
 
     async def initialize(self):
         """初始化 IP 管理器"""
@@ -41,6 +43,7 @@ class IPManager:
             from config import get_credentials_dir
             credentials_dir = await get_credentials_dir()
             self._ip_data_path = os.path.join(credentials_dir, "ip_stats.toml")
+            self._ban_operations_file = os.path.join(credentials_dir, "ban_operations.toml")
 
             # 加载 IP 数据
             await self._load_ip_data()
@@ -99,11 +102,12 @@ class IPManager:
                 log.error(f"Error in periodic save: {e}")
 
     async def _periodic_unban_check(self):
-        """定期检查并自动解封24小时后的IP"""
+        """定期检查并自动解封24小时后的IP + 清理3天未访问的IP"""
         while True:
             try:
-                await asyncio.sleep(1800)  # 每30分钟检查一次
+                await asyncio.sleep(1800)  # 每30分钟检查一次（减少解封延迟）
                 await self._auto_unban_expired_ips()
+                await self._cleanup_old_ips()  # 新增：清理旧IP记录
             except Exception as e:
                 log.error(f"Error in periodic unban check: {e}")
 
@@ -129,6 +133,79 @@ class IPManager:
             if unban_count > 0:
                 self._cache_dirty = True
                 log.info(f"Auto-unbanned {unban_count} IPs")
+
+    async def _cleanup_old_ips(self):
+        """
+        根据请求次数动态清理未访问的IP记录（被封禁的IP除外）
+
+        清理策略（请求次数越少清理越快）：
+        - 低频用户（<50次）：3天未访问就清理（试用用户，快速清理）
+        - 中频用户（50-299次）：5天未访问才清理
+        - 高频用户（≥300次）：7天未访问才清理（老用户，保留更久）
+        """
+        async with self._cache_lock:
+            if "ips" not in self._ip_cache:
+                return
+
+            current_time = time.time()
+
+            # 清理时间阈值（秒）
+            three_days = 3 * 86400   # 259200秒
+            five_days = 5 * 86400    # 432000秒
+            seven_days = 7 * 86400   # 604800秒
+
+            ips_to_remove = []
+            cleanup_stats = {"high_freq": 0, "mid_freq": 0, "low_freq": 0}
+
+            for ip, ip_data in list(self._ip_cache["ips"].items()):
+                last_request = ip_data.get("last_request_time", 0)
+                status = ip_data.get("status", "active")
+                total_requests = ip_data.get("total_requests", 0)
+
+                # 被封禁的IP永久保留
+                if status == "banned":
+                    continue
+
+                # 如果没有last_request_time，跳过
+                if last_request == 0:
+                    continue
+
+                inactive_time = current_time - last_request
+
+                # 根据请求次数动态判断清理时间（请求次数越少清理越快）
+                should_remove = False
+
+                if total_requests >= 300:
+                    # 高频用户（老用户）：7天未访问才清理
+                    if inactive_time >= seven_days:
+                        should_remove = True
+                        cleanup_stats["high_freq"] += 1
+                elif total_requests >= 50:
+                    # 中频用户：5天未访问才清理
+                    if inactive_time >= five_days:
+                        should_remove = True
+                        cleanup_stats["mid_freq"] += 1
+                else:
+                    # 低频用户（试用/一次性用户）：3天未访问就清理
+                    if inactive_time >= three_days:
+                        should_remove = True
+                        cleanup_stats["low_freq"] += 1
+
+                if should_remove:
+                    ips_to_remove.append(ip)
+
+            # 执行清理
+            for ip in ips_to_remove:
+                del self._ip_cache["ips"][ip]
+
+            if ips_to_remove:
+                self._cache_dirty = True
+                log.info(
+                    f"Cleaned up {len(ips_to_remove)} old IP records - "
+                    f"High-freq(≥300,7d): {cleanup_stats['high_freq']}, "
+                    f"Mid-freq(50-299,5d): {cleanup_stats['mid_freq']}, "
+                    f"Low-freq(<50,3d): {cleanup_stats['low_freq']}"
+                )
 
     def _ensure_initialized(self):
         """确保已初始化"""
@@ -219,21 +296,37 @@ class IPManager:
                         return False
 
             # 初始化或更新 IP 数据
+            china_tz = timezone(timedelta(hours=8))
+            today_date = datetime.now(china_tz).strftime("%Y-%m-%d")
+
             if ip not in self._ip_cache["ips"]:
                 self._ip_cache["ips"][ip] = {
                     "first_seen": datetime.now(UTC_PLUS_8).strftime("%Y-%m-%d %H:%M:%S"),
                     "total_requests": 0,
+                    "today_requests": 0,           # 新增：今日请求数
+                    "today_date": today_date,      # 新增：今日日期
                     "status": "active",  # active, banned, rate_limited
                     "location": await self._get_ip_location(ip),
                     "user_agents": [],
-                    "models_used": {},
+                    "models_used": {},             # 只记录今日模型使用
                     "endpoints": {},
                 }
 
             ip_data = self._ip_cache["ips"][ip]
 
+            # 检查是否需要重置今日统计（UTC+8 每天00:00重置）
+            last_date = ip_data.get("today_date", "")
+            if last_date != today_date:
+                # 新的一天，重置今日统计
+                ip_data["today_requests"] = 0
+                ip_data["today_date"] = today_date
+                ip_data["models_used"] = {}  # 清空模型使用记录（节省内存）
+                self._cache_dirty = True
+                log.debug(f"Reset daily stats for IP {ip} on {today_date}")
+
             # 更新统计
             ip_data["total_requests"] = ip_data.get("total_requests", 0) + 1
+            ip_data["today_requests"] = ip_data.get("today_requests", 0) + 1  # 今日请求+1
             ip_data["last_request_time"] = time.time()
             ip_data["last_seen"] = datetime.now(UTC_PLUS_8).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -245,13 +338,13 @@ class IPManager:
                 # 只保留最近10个不同的 User-Agent
                 ip_data["user_agents"] = ip_data["user_agents"][-10:]
 
-            # 记录模型使用
+            # 记录模型使用（只记录今日）
             if model:
                 if "models_used" not in ip_data:
                     ip_data["models_used"] = {}
                 ip_data["models_used"][model] = ip_data["models_used"].get(model, 0) + 1
 
-            # 记录端点使用
+            # 记录端点使用（累计，不重置）
             if "endpoints" not in ip_data:
                 ip_data["endpoints"] = {}
             ip_data["endpoints"][endpoint] = ip_data["endpoints"].get(endpoint, 0) + 1
@@ -380,9 +473,125 @@ class IPManager:
                 )
                 return sorted_ips
 
+    async def _load_ban_operations(self) -> Dict[str, Any]:
+        """
+        从文件加载封禁操作记录，并自动清理超过30分钟的记录（懒清理）
+
+        Returns:
+            封禁操作记录字典 {"operators": {operator_ip: [timestamp1, timestamp2, ...]}}
+        """
+        current_time = time.time()
+        time_window = 1800  # 30分钟 = 1800秒
+
+        try:
+            if os.path.exists(self._ban_operations_file):
+                async with aiofiles.open(self._ban_operations_file, "r", encoding="utf-8") as f:
+                    content = await f.read()
+                ban_data = toml.loads(content)
+            else:
+                ban_data = {"operators": {}}
+
+            # 懒清理：移除所有超过30分钟的记录
+            cleaned_operators = {}
+            removed_count = 0
+
+            for operator_ip, timestamps in ban_data.get("operators", {}).items():
+                # 过滤掉超过30分钟的时间戳
+                valid_timestamps = [ts for ts in timestamps if current_time - ts < time_window]
+
+                # 只保留还有有效记录的操作者
+                if valid_timestamps:
+                    cleaned_operators[operator_ip] = valid_timestamps
+                else:
+                    removed_count += 1
+
+            # 如果清理了记录，更新文件
+            if removed_count > 0:
+                ban_data["operators"] = cleaned_operators
+                await self._save_ban_operations(ban_data)
+                log.debug(f"Cleaned {removed_count} expired ban operation records")
+
+            return ban_data
+
+        except Exception as e:
+            log.error(f"Failed to load ban operations: {e}")
+            return {"operators": {}}
+
+    async def _save_ban_operations(self, ban_data: Dict[str, Any]):
+        """
+        保存封禁操作记录到文件
+
+        Args:
+            ban_data: 封禁操作记录数据
+        """
+        try:
+            toml_content = toml.dumps(ban_data)
+            async with aiofiles.open(self._ban_operations_file, "w", encoding="utf-8") as f:
+                await f.write(toml_content)
+            log.debug("Ban operations saved to file")
+        except Exception as e:
+            log.error(f"Failed to save ban operations: {e}")
+
+    async def _record_ban_operation(self, operator_ip: str):
+        """
+        记录一次封禁操作
+
+        Args:
+            operator_ip: 操作者的IP地址
+        """
+        try:
+            ban_data = await self._load_ban_operations()
+
+            if "operators" not in ban_data:
+                ban_data["operators"] = {}
+
+            if operator_ip not in ban_data["operators"]:
+                ban_data["operators"][operator_ip] = []
+
+            ban_data["operators"][operator_ip].append(time.time())
+
+            await self._save_ban_operations(ban_data)
+            log.info(f"Recorded ban operation from {operator_ip} ({len(ban_data['operators'][operator_ip])}/5 in 30min)")
+
+        except Exception as e:
+            log.error(f"Failed to record ban operation: {e}")
+
+    async def _check_ban_operation_limit(self, operator_ip: str) -> tuple[bool, str]:
+        """
+        检查操作者的封禁操作频率限制（从文件读取，自动清理过期记录）
+
+        Args:
+            operator_ip: 操作者的IP地址
+
+        Returns:
+            (是否允许, 错误信息)
+        """
+        max_bans = 5  # 最多5次封禁操作
+        time_window = 1800  # 30分钟 = 1800秒
+
+        try:
+            # 加载并自动清理过期记录
+            ban_data = await self._load_ban_operations()
+
+            operator_records = ban_data.get("operators", {}).get(operator_ip, [])
+            ban_count = len(operator_records)
+
+            if ban_count >= max_bans:
+                # 计算还需要等待的时间
+                oldest_timestamp = operator_records[0]
+                remaining_time = int(time_window - (time.time() - oldest_timestamp))
+                minutes = remaining_time // 60
+                return False, f"封禁操作过于频繁，请在 {minutes} 分钟后再试（30分钟内最多封禁5次）"
+
+            return True, ""
+
+        except Exception as e:
+            log.error(f"Error checking ban operation limit: {e}")
+            return True, ""  # 检查失败时允许操作，避免阻塞
+
     async def set_ip_status(
-        self, ip: str, status: str, rate_limit_seconds: Optional[int] = None
-    ) -> bool:
+        self, ip: str, status: str, rate_limit_seconds: Optional[int] = None, operator_ip: Optional[str] = None
+    ) -> tuple[bool, str]:
         """
         设置 IP 状态
 
@@ -390,25 +599,43 @@ class IPManager:
             ip: IP 地址
             status: 状态 (active, banned, rate_limited)
             rate_limit_seconds: 限速秒数（仅用于 rate_limited 状态）
+            operator_ip: 操作者的IP地址（用于限制封禁频率）
 
         Returns:
-            是否成功
+            (是否成功, 错误信息)
         """
         self._ensure_initialized()
 
         if status not in ["active", "banned", "rate_limited"]:
             log.error(f"Invalid IP status: {status}")
-            return False
+            return False, "无效的状态类型"
 
         async with self._cache_lock:
             if "ips" not in self._ip_cache:
                 self._ip_cache["ips"] = {}
+
+            # 封禁操作的额外检查
+            if status == "banned":
+                # 检查1：今日请求少于50次不能被封禁（保护新用户体验）
+                if ip in self._ip_cache["ips"]:
+                    today_requests = self._ip_cache["ips"][ip].get("today_requests", 0)
+                    if today_requests < 50:
+                        log.warning(f"Cannot ban IP {ip}: only {today_requests} requests today (minimum 50)")
+                        return False, f"今日请求仅 {today_requests} 次，少于50次不能封禁（保护新用户体验）"
+
+                # 检查2：操作者封禁频率限制
+                if operator_ip:
+                    allowed, error_msg = await self._check_ban_operation_limit(operator_ip)
+                    if not allowed:
+                        log.warning(f"Ban operation from {operator_ip} rate limited")
+                        return False, error_msg
 
             if ip not in self._ip_cache["ips"]:
                 # 如果 IP 不存在，创建新记录
                 self._ip_cache["ips"][ip] = {
                     "first_seen": datetime.now(UTC_PLUS_8).strftime("%Y-%m-%d %H:%M:%S"),
                     "total_requests": 0,
+                    "today_requests": 0,
                     "location": await self._get_ip_location(ip),
                 }
 
@@ -424,7 +651,12 @@ class IPManager:
 
             self._cache_dirty = True
             log.info(f"Set IP {ip} status to {status}")
-            return True
+
+        # 封禁成功后，在锁外记录操作（避免死锁）
+        if status == "banned" and operator_ip:
+            await self._record_ban_operation(operator_ip)
+
+        return True, ""
 
     async def get_all_ips_summary(self) -> Dict[str, Any]:
         """获取所有 IP 的摘要统计"""
@@ -440,6 +672,7 @@ class IPManager:
                 1 for ip_data in all_ips.values() if ip_data.get("status") == "rate_limited"
             )
             total_requests = sum(ip_data.get("total_requests", 0) for ip_data in all_ips.values())
+            today_requests = sum(ip_data.get("today_requests", 0) for ip_data in all_ips.values())
 
             return {
                 "total_ips": total_ips,
@@ -447,6 +680,88 @@ class IPManager:
                 "banned_ips": banned_ips,
                 "rate_limited_ips": rate_limited_ips,
                 "total_requests": total_requests,
+                "today_requests": today_requests,  # 新增：今日总请求
+            }
+
+    async def get_ip_ranking(
+        self,
+        rank_by: str = "today",
+        page: int = 1,
+        page_size: int = 20,
+        include_banned: bool = False
+    ) -> Dict[str, Any]:
+        """
+        获取 IP 排行榜（分页）
+
+        Args:
+            rank_by: 排序依据 ("today" 今日请求 或 "total" 总请求)
+            page: 页码（从1开始）
+            page_size: 每页数量（默认20）
+            include_banned: 是否包含被封禁的IP
+
+        Returns:
+            {
+                "items": [...],       # 当前页数据
+                "page": 1,            # 当前页码
+                "page_size": 20,      # 每页数量
+                "total": 640,         # 总记录数
+                "total_pages": 32,    # 总页数
+                "has_next": True,     # 是否有下一页
+                "has_prev": False     # 是否有上一页
+            }
+        """
+        self._ensure_initialized()
+
+        async with self._cache_lock:
+            all_ips = self._ip_cache.get("ips", {})
+
+            # 过滤IP
+            filtered_ips = []
+            for ip, ip_data in all_ips.items():
+                # 是否包含被封禁IP
+                if not include_banned and ip_data.get("status") == "banned":
+                    continue
+
+                filtered_ips.append({
+                    "ip": ip,
+                    "today_requests": ip_data.get("today_requests", 0),
+                    "total_requests": ip_data.get("total_requests", 0),
+                    "status": ip_data.get("status", "active"),
+                    "location": ip_data.get("location", "未知"),
+                    "first_seen": ip_data.get("first_seen", ""),
+                    "last_seen": ip_data.get("last_seen", ""),
+                })
+
+            # 排序
+            sort_key = "today_requests" if rank_by == "today" else "total_requests"
+            sorted_ips = sorted(
+                filtered_ips,
+                key=lambda x: x[sort_key],
+                reverse=True
+            )
+
+            # 分页计算
+            total = len(sorted_ips)
+            total_pages = (total + page_size - 1) // page_size  # 向上取整
+
+            # 确保页码合法
+            page = max(1, min(page, total_pages if total_pages > 0 else 1))
+
+            # 计算起始和结束索引
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+
+            # 获取当前页数据
+            page_items = sorted_ips[start_index:end_index]
+
+            return {
+                "items": page_items,
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": total_pages,
+                "has_next": page < total_pages,
+                "has_prev": page > 1
             }
 
 

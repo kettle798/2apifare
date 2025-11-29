@@ -12,12 +12,21 @@ from typing import Any, Optional
 AUTO_BAN_ERROR_CODES = [401, 403]
 
 # Default Safety Settings for Google API
+# 包含所有已知的安全分类，确保内容不被过滤
 DEFAULT_SAFETY_SETTINGS = [
+    # 基础安全分类
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_NONE"},
+    # 图像相关安全分类（Vertex AI 新增）
+    {"category": "HARM_CATEGORY_IMAGE_HATE", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_IMAGE_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_IMAGE_HARASSMENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_IMAGE_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+    # 越狱检测分类
+    {"category": "HARM_CATEGORY_JAILBREAK", "threshold": "BLOCK_NONE"},
 ]
 
 

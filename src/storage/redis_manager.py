@@ -87,7 +87,7 @@ class RedisManager:
 
         # 性能监控
         self._operation_count = 0
-        self._operation_times = deque(maxlen=5000)
+        self._operation_times = deque(maxlen=1)
 
         # 统一缓存管理器
         self._credentials_cache_manager: Optional[UnifiedCacheManager] = None

@@ -279,6 +279,50 @@
             color: #a8d5ff;
         }
 
+        /* 顶部浮动通知 */
+        .top-notification {
+            position: fixed;
+            top: -100px;
+            left: 50%;
+            transform: translateX(-50%);
+            min-width: 320px;
+            max-width: 600px;
+            padding: 16px 24px;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 500;
+            text-align: center;
+            z-index: 10000;
+            opacity: 0;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            transition: all 0.3s ease;
+        }
+
+        .top-notification.show {
+            top: 20px;
+            opacity: 0.5;  /* 50% 透明度 */
+        }
+
+        .top-notification.success {
+            background: rgba(34, 84, 44, 0.9);
+            border-color: rgba(52, 168, 83, 0.5);
+            color: #a8f5ba;
+        }
+
+        .top-notification.error {
+            background: rgba(95, 33, 32, 0.9);
+            border-color: rgba(234, 67, 53, 0.5);
+            color: #ffb3ba;
+        }
+
+        .top-notification.info {
+            background: rgba(66, 133, 244, 0.9);
+            border-color: rgba(66, 133, 244, 0.5);
+            color: #a8d5ff;
+        }
+
         .hidden {
             display: none;
         }
@@ -1322,8 +1366,8 @@
 
         .ip-info {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 10px;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 8px;
             margin: 10px 0;
             font-size: 13px;
         }
@@ -1655,6 +1699,18 @@
         @keyframes iconPulse {
             0%, 100% { transform: scale(1.2); }
             50% { transform: scale(1.3); }
+        }
+
+        /* 呼吸发光动画 - 用于排序按钮 */
+        @keyframes breatheGlow {
+            0%, 100% {
+                box-shadow: 0 0 10px rgba(138, 43, 226, 0.4);
+                background-color: rgba(138, 43, 226, 0.15);
+            }
+            50% {
+                box-shadow: 0 0 20px rgba(138, 43, 226, 0.8);
+                background-color: rgba(138, 43, 226, 0.25);
+            }
         }
 
         .delete-option-text {
@@ -2294,10 +2350,13 @@
             /* 文件管理 - 刷新按钮极致紧凑 */
             .manage-actions {
                 margin-bottom: 6px;
+                display: flex;
+                gap: 5px;
+                flex-wrap: nowrap;  /* 不换行，强制一排 */
             }
 
             .manage-actions .refresh-btn {
-                width: 100%;
+                flex: 1;  /* 平均分配宽度 */
                 padding: 6px;                     /* 极小内边距 */
                 font-size: 12px;                  /* 更小字体 */
                 min-height: 30px;
@@ -2555,6 +2614,40 @@
                 min-height: 28px;                 /* 最小高度 */
                 border-radius: 4px !important;
                 white-space: nowrap;              /* 按钮文字不换行 */
+            }
+
+            /* IP统计字段移动端配对显示 */
+            .ip-info {
+                grid-template-columns: repeat(2, 1fr) !important;  /* 移动端强制2列 */
+            }
+
+            /* 地理位置占满整行 */
+            .ip-info > .ip-info-item:nth-child(1) {
+                grid-column: 1 / -1;
+            }
+
+            /* 总请求数和今日请求配对 (第2、3个字段) - 使用直接子选择器 */
+            .ip-info > .ip-info-item:nth-child(2),
+            .ip-info > .ip-info-item:nth-child(3) {
+                grid-column: auto;  /* 各占一列 */
+            }
+
+            /* 首次访问和最后访问配对 (第4、5个字段) - 使用直接子选择器 */
+            .ip-info > .ip-info-item:nth-child(4),
+            .ip-info > .ip-info-item:nth-child(5) {
+                grid-column: auto;  /* 各占一列 */
+            }
+
+            /* 确保封禁信息wrapper内部的grid在移动端正确显示（各占半排） */
+            .ip-info > div[style*="grid-template-columns: 1fr 1fr"] {
+                display: grid !important;
+                grid-template-columns: 1fr 1fr !important;
+                gap: 8px !important;
+            }
+
+            /* 封禁信息wrapper内的item各占一列 */
+            .ip-info > div[style*="grid-template-columns: 1fr 1fr"] > .ip-info-item {
+                grid-column: auto !important;
             }
         }
 
@@ -3439,6 +3532,8 @@
 
                     <div class="manage-actions">
                         <button class="refresh-btn" onclick="refreshIPStats()">刷新统计</button>
+                        <button class="refresh-btn" id="sortByTodayBtn" onclick="sortIPListBy('today')">今日请求</button>
+                        <button class="refresh-btn" id="sortByTotalBtn" onclick="sortIPListBy('total')">历史请求</button>
                     </div>
 
                     <!-- IP 列表 -->
@@ -4063,28 +4158,30 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
 
         function showStatus(message, type = 'info') {
             console.log('showStatus called:', message, type);
-            // 先尝试登录界面的状态区域
-            const loginStatusSection = document.getElementById('loginStatusSection');
-            const statusSection = document.getElementById('statusSection');
 
-            // 判断当前是否在登录界面
-            const loginSection = document.getElementById('loginSection');
-            const isLoginPage = loginSection && !loginSection.classList.contains('hidden');
+            // 创建顶部浮动通知
+            const notification = document.createElement('div');
+            notification.className = `top-notification ${type}`;
+            notification.textContent = message;
 
-            const targetSection = isLoginPage ? loginStatusSection : statusSection;
+            // 添加到body
+            document.body.appendChild(notification);
 
-            if (targetSection) {
-                targetSection.innerHTML = `<div class="status ${type}">${message}</div>`;
-                // 3秒后自动清除错误提示（登录界面）
-                if (isLoginPage && type === 'error') {
-                    setTimeout(() => {
-                        targetSection.innerHTML = '';
-                    }, 3000);
-                }
-            } else {
-                console.error('Status section not found');
-                alert(message); // 临时回退方案
-            }
+            // 触发动画（从上滑入）
+            setTimeout(() => {
+                notification.classList.add('show');
+            }, 10);
+
+            // 3秒后自动消失
+            setTimeout(() => {
+                notification.classList.remove('show');
+                // 动画结束后移除元素
+                setTimeout(() => {
+                    if (notification.parentNode) {
+                        notification.parentNode.removeChild(notification);
+                    }
+                }, 300);
+            }, 3000);
         }
 
         // 登录相关函数
@@ -6253,6 +6350,13 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                 checkbox.addEventListener('change', handleGetAllProjectsChange);
             }
 
+            // 初始化 IP 排序按钮默认状态（今日请求按钮默认激活）
+            const todayBtn = document.getElementById('sortByTodayBtn');
+            if (todayBtn) {
+                todayBtn.style.animation = 'breatheGlow 2s ease-in-out infinite';
+                todayBtn.style.color = 'rgba(255, 255, 255, 0.95)';
+            }
+
             // 检查登录状态，如果显示登录界面，则添加玻璃态背景
             const loginSection = document.getElementById('loginSection');
             if (loginSection && !loginSection.classList.contains('hidden')) {
@@ -6660,6 +6764,7 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
         let allIPsData = {};
         let currentIPPage = 1;
         const itemsPerPage = 20;
+        let currentIPSortBy = 'today';  // 默认按今日请求排序 ('today' 或 'total')
 
         // 刷新 IP 统计
         async function refreshIPStats() {
@@ -6695,9 +6800,11 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
 
                     // 保存所有 IP 数据
                     allIPsData = statsData.data || {};
-                    currentIPPage = 1;
 
-                    // 渲染第一页
+                    // 不重置页码，保持当前页（除非当前页超出范围）
+                    // currentIPPage = 1;  // 移除这行，避免跳转到第一页
+
+                    // 渲染当前页
                     renderIPList();
 
                     showStatus(`已加载 ${summaryData.data.total_ips} 个 IP 的统计数据`, 'success');
@@ -6724,9 +6831,24 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                 return;
             }
 
-            // 转换为数组并分页
+            // 转换为数组并按当前排序方式排序
             const ipsArray = Object.entries(allIPsData);
+
+            // 根据当前排序方式排序
+            const sortKey = currentIPSortBy === 'today' ? 'today_requests' : 'total_requests';
+            ipsArray.sort((a, b) => {
+                const valueA = a[1][sortKey] || 0;
+                const valueB = b[1][sortKey] || 0;
+                return valueB - valueA;  // 降序排序
+            });
+
             const totalPages = Math.ceil(ipsArray.length / itemsPerPage);
+
+            // 如果当前页码超出范围，自动调整到最后一页
+            if (currentIPPage > totalPages && totalPages > 0) {
+                currentIPPage = totalPages;
+            }
+
             const startIndex = (currentIPPage - 1) * itemsPerPage;
             const endIndex = startIndex + itemsPerPage;
             const currentPageData = ipsArray.slice(startIndex, endIndex);
@@ -6767,6 +6889,43 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                 // 滚动到列表顶部
                 document.getElementById('ipListSection').scrollIntoView({ behavior: 'smooth' });
             }
+        }
+
+        // 切换IP列表排序方式
+        function sortIPListBy(sortBy) {
+            // 更新排序方式
+            currentIPSortBy = sortBy;
+            currentIPPage = 1;  // 重置到第一页
+
+            // 更新按钮样式：淡紫色呼吸发光效果
+            const todayBtn = document.getElementById('sortByTodayBtn');
+            const totalBtn = document.getElementById('sortByTotalBtn');
+
+            if (sortBy === 'today') {
+                // 今日请求按钮：淡紫色呼吸发光
+                todayBtn.style.animation = 'breatheGlow 2s ease-in-out infinite';
+                todayBtn.style.color = 'rgba(255, 255, 255, 0.95)';
+                // 历史请求按钮：恢复默认
+                totalBtn.style.animation = '';
+                totalBtn.style.backgroundColor = '';
+                totalBtn.style.boxShadow = '';
+                totalBtn.style.color = '';
+            } else {
+                // 历史请求按钮：淡紫色呼吸发光
+                totalBtn.style.animation = 'breatheGlow 2s ease-in-out infinite';
+                totalBtn.style.color = 'rgba(255, 255, 255, 0.95)';
+                // 今日请求按钮：恢复默认
+                todayBtn.style.animation = '';
+                todayBtn.style.backgroundColor = '';
+                todayBtn.style.boxShadow = '';
+                todayBtn.style.color = '';
+            }
+
+            // 重新渲染列表
+            renderIPList();
+
+            // 滚动到列表顶部
+            document.getElementById('ipListSection').scrollIntoView({ behavior: 'smooth' });
         }
 
         // IP 脱敏函数
@@ -6834,14 +6993,6 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                 .map(([model, count]) => `<span style="margin-right: 10px;">${model}: ${count}次</span>`)
                 .join('') || '无';
 
-            // 如果有自动解封记录，显示提示
-            if (stats.auto_unbanned_time) {
-                banTimeInfo = `<div class="ip-info-item" style="grid-column: 1 / -1; color: #28a745;">
-                    <span class="ip-info-label">🔓 自动解封</span>
-                    <span class="ip-info-value">${stats.auto_unbanned_time}</span>
-                </div>`;
-            }
-
             div.innerHTML = `
                 <div class="ip-header">
                     <div class="ip-address">${maskedIP}</div>
@@ -6859,6 +7010,10 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                         <span class="ip-info-value">${stats.total_requests || 0} 次</span>
                     </div>
                     <div class="ip-info-item">
+                        <span class="ip-info-label">📅 今日请求</span>
+                        <span class="ip-info-value">${stats.today_requests || 0} 次</span>
+                    </div>
+                    <div class="ip-info-item">
                         <span class="ip-info-label">🕐 首次访问</span>
                         <span class="ip-info-value">${stats.first_seen || '未知'}</span>
                     </div>
@@ -6866,11 +7021,45 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                         <span class="ip-info-label">🕑 最后访问</span>
                         <span class="ip-info-value">${stats.last_seen || '未知'}</span>
                     </div>
-                    ${stats.banned_at ? `<div class="ip-info-item" style="grid-column: 1 / -1; color: #dc3545;">
-                        <span class="ip-info-label">🚫 封禁时间</span>
-                        <span class="ip-info-value">${stats.banned_at}</span>
-                    </div>` : ''}
-                    ${banTimeInfo}
+                    ${status === 'banned' && stats.banned_at ? (() => {
+                        // 仅当前正在被封禁的IP才显示封禁信息
+                        let unbanLabel = '';
+                        let unbanTime = '';
+
+                        // 优先显示历史解封时间，否则计算预计解封时间
+                        if (stats.auto_unbanned_time) {
+                            unbanLabel = '🔓 历史解封';
+                            unbanTime = stats.auto_unbanned_time;
+                        } else {
+                            unbanLabel = '⏰ 预计解封';
+                            try {
+                                const banDate = new Date(stats.banned_at);
+                                const unbanDate = new Date(banDate.getTime() + 24 * 60 * 60 * 1000);
+                                unbanTime = unbanDate.toLocaleString('zh-CN', {
+                                    year: 'numeric',
+                                    month: '2-digit',
+                                    day: '2-digit',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    second: '2-digit',
+                                    hour12: false
+                                }).replace(/\//g, '-');
+                            } catch (e) {
+                                unbanTime = '计算失败';
+                            }
+                        }
+
+                        return `<div style="grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                            <div class="ip-info-item" style="color: #dc3545;">
+                                <span class="ip-info-label">🚫 封禁时间</span>
+                                <span class="ip-info-value">${stats.banned_at}</span>
+                            </div>
+                            <div class="ip-info-item" style="color: #ffa500;">
+                                <span class="ip-info-label">${unbanLabel}</span>
+                                <span class="ip-info-value">${unbanTime}</span>
+                            </div>
+                        </div>`;
+                    })() : ''}
                     <div class="ip-info-item" style="grid-column: 1 / -1;">
                         <span class="ip-info-label">🤖 使用模型</span>
                         <span class="ip-info-value">${modelsHtml}</span>

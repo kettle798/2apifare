@@ -198,6 +198,22 @@ async def save_credentials(token_data: Dict[str, Any], user_info: Optional[Dict[
 
         log.info(f"✅ 凭证已保存到 {CREDS_FILE}")
         log.info(f"📊 当前共有 {len(existing_data['accounts'])} 个账户")
+
+        # ⚡ 立即加入轮换队列（事件驱动，无需等待轮询）
+        try:
+            from src.antigravity_credential_manager import get_antigravity_credential_manager
+
+            # 准备账号数据（包含 expires_in 和 timestamp）
+            account_data_for_manager = new_account.copy()
+            account_data_for_manager['expires_in'] = token_data.get('expires_in', 3600)  # 默认 1 小时
+            account_data_for_manager['timestamp'] = int(time.time() * 1000)  # 毫秒时间戳
+
+            antigravity_manager = await get_antigravity_credential_manager()
+            await antigravity_manager.add_account(account_data_for_manager)
+            log.info(f"[INSTANT] Antigravity 账号 {email} 已立即加入轮换队列")
+        except Exception as e:
+            log.warning(f"添加到轮换队列失败（不影响保存）: {e}")
+
         return True
     except Exception as e:
         log.error(f"Failed to save credentials: {e}")

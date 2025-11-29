@@ -245,7 +245,14 @@ def convert_sse_to_openai_format(
     if not created:
         created = int(time.time())
 
-    if sse_chunk['type'] == 'tool_calls':
+    # [FIX] 完全过滤掉 thinking 类型的 chunk（包括 <think> 标签）
+    chunk_type = sse_chunk.get('type')
+
+    if chunk_type == 'thinking':
+        # thinking 内容不输出到前端，返回空字符串
+        return ""
+
+    if chunk_type == 'tool_calls':
         # 工具调用
         chunk = {
             'id': stream_id,
@@ -260,8 +267,8 @@ def convert_sse_to_openai_format(
                 'finish_reason': None
             }]
         }
-    else:
-        # 文本内容（包括 thinking）
+    elif chunk_type == 'text':
+        # 只输出实际的文本内容（不包括 thinking）
         chunk = {
             'id': stream_id,
             'object': 'chat.completion.chunk',
@@ -275,6 +282,9 @@ def convert_sse_to_openai_format(
                 'finish_reason': None
             }]
         }
+    else:
+        # 未知类型，不输出
+        return ""
 
     return f"data: {json.dumps(chunk)}\n\n"
 

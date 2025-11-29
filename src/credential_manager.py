@@ -41,11 +41,6 @@ class CredentialManager:
         self._state_lock = asyncio.Lock()
         self._operation_lock = asyncio.Lock()
 
-        # 工作线程控制
-        self._shutdown_event = asyncio.Event()
-        self._write_worker_running = False
-        self._write_worker_task = None
-
         # 原子操作计数器
         self._atomic_counter = 0
         self._atomic_lock = asyncio.Lock()
@@ -63,9 +58,6 @@ class CredentialManager:
             # 初始化统一存储适配器
             self._storage_adapter = await get_storage_adapter()
 
-            # 启动后台工作线程
-            await self._start_background_workers()
-
             # 发现并加载凭证
             await self._discover_credentials()
 
@@ -76,62 +68,8 @@ class CredentialManager:
     async def close(self):
         """清理资源"""
         log.debug("Closing credential manager...")
-
-        # 设置关闭标志
-        self._shutdown_event.set()
-
-        # 等待后台任务结束
-        if self._write_worker_task:
-            try:
-                await asyncio.wait_for(self._write_worker_task, timeout=5.0)
-            except asyncio.TimeoutError:
-                log.warning("Write worker task did not finish within timeout")
-                if not self._write_worker_task.done():
-                    self._write_worker_task.cancel()
-            except asyncio.CancelledError:
-                # 任务被取消是正常的关闭流程
-                log.debug("Background worker task was cancelled during shutdown")
-
         self._initialized = False
         log.debug("Credential manager closed")
-
-    async def _start_background_workers(self):
-        """启动后台工作线程"""
-        if not self._write_worker_running:
-            self._write_worker_running = True
-            self._write_worker_task = task_manager.create_task(
-                self._background_worker(), name="credential_background_worker"
-            )
-
-    async def _background_worker(self):
-        """后台工作线程，处理定期任务"""
-        try:
-            while not self._shutdown_event.is_set():
-                try:
-                    # 每60秒检查一次凭证更新
-                    await asyncio.wait_for(self._shutdown_event.wait(), timeout=60.0)
-                    if self._shutdown_event.is_set():
-                        break
-
-                    # 重新发现凭证（热更新）
-                    await self._discover_credentials()
-
-                except asyncio.TimeoutError:
-                    # 超时是正常的，继续下一轮
-                    continue
-                except asyncio.CancelledError:
-                    # 任务被取消，正常退出
-                    log.debug("Background worker cancelled, exiting gracefully")
-                    break
-                except Exception as e:
-                    log.error(f"Background worker error: {e}")
-                    await asyncio.sleep(5)  # 错误后等待5秒再继续
-        except asyncio.CancelledError:
-            # 外层捕获取消，确保干净退出
-            log.debug("Background worker received cancellation")
-        finally:
-            log.debug("Background worker exited")
-            self._write_worker_running = False
 
     async def _discover_credentials(self):
         """发现和加载所有可用凭证"""
@@ -436,6 +374,91 @@ class CredentialManager:
         except Exception as e:
             log.error(f"Error setting credential freeze status {credential_name}: {e}")
             return False
+
+    async def add_credential(self, credential_name: str, credential_data: Dict[str, Any]):
+        """
+        新增或更新 Gemini 凭证，立即加入轮换队列
+
+        使用场景：
+            - 上传凭证文件后调用
+            - 新凭证立即参与轮换，无需等待轮询
+
+        参数：
+            credential_name: 凭证文件名（如 "creds_xxx.json"）
+            credential_data: 凭证数据字典
+        """
+        async with self._operation_lock:
+            try:
+                # 1. 存储凭证到持久化层
+                success = await self._storage_adapter.store_credential(credential_name, credential_data)
+                if not success:
+                    log.error(f"[FAIL] Failed to store credential: {credential_name}")
+                    return False
+
+                log.info(f"[OK] Gemini credential {credential_name} stored successfully")
+
+                # 2. 创建默认状态记录（如果不存在）
+                all_states = await self._storage_adapter.get_all_credential_states()
+                if credential_name not in all_states:
+                    import time
+                    default_state = {
+                        "error_codes": [],
+                        "disabled": False,
+                        "last_success": time.time(),
+                        "user_email": None,
+                        "gemini_2_5_pro_calls": 0,
+                        "total_calls": 0,
+                        "next_reset_time": None,
+                        "daily_limit_gemini_2_5_pro": 100,
+                        "daily_limit_total": 1000,
+                    }
+                    await self._storage_adapter.update_credential_state(credential_name, default_state)
+                    log.debug(f"Created default state for: {credential_name}")
+
+                # 3. 检查是否被禁用或冻结
+                state = await self._storage_adapter.get_credential_state(credential_name)
+                is_disabled = state.get("disabled", False) if state else False
+                is_frozen = state.get("freeze_frozen", False) if state else False
+
+                if is_disabled:
+                    log.info(f"Credential {credential_name} added but disabled, not adding to queue")
+                    return True
+
+                if is_frozen:
+                    log.info(f"Credential {credential_name} added but frozen, not adding to queue")
+                    return True
+
+                # 4. 立即加入轮换队列
+                # 检查是否已在队列中
+                existing_index = None
+                for i, cred_name in enumerate(self._credential_files):
+                    if cred_name == credential_name:
+                        existing_index = i
+                        break
+
+                if existing_index is not None:
+                    log.info(f"[OK] Gemini credential {credential_name} already in queue (updated)")
+                else:
+                    self._credential_files.append(credential_name)
+                    log.info(f"[OK] Gemini credential {credential_name} immediately added to rotation queue (queue size: {len(self._credential_files)})")
+
+                return True
+
+            except Exception as e:
+                log.error(f"Failed to add Gemini credential {credential_name}: {e}")
+                raise
+
+    async def refresh_credentials(self):
+        """
+        手动刷新凭证列表（保留接口，用于特殊情况）
+
+        使用场景：
+            - 直接修改凭证文件后手动刷新
+            - 系统恢复后重新扫描
+        """
+        log.info("Manually refreshing Gemini credential list...")
+        await self._discover_credentials()
+        log.info(f"Refresh complete, current queue size: {len(self._credential_files)}")
 
     async def get_creds_status(self) -> Dict[str, Dict[str, Any]]:
         """获取所有凭证的状态"""

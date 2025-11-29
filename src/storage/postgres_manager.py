@@ -79,7 +79,7 @@ class PostgresManager:
 
         self._operation_count = 0
 
-        self._operation_times = deque(maxlen=5000)
+        self._operation_times = deque(maxlen=1)
 
         self._credentials_cache_manager: Optional[UnifiedCacheManager] = None
         self._config_cache_manager: Optional[UnifiedCacheManager] = None

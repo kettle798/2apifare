@@ -63,9 +63,11 @@ class AntigravityUsageStats:
         """
         检查是否是 Claude Sonnet 4.5 系列模型
 
-        包括：
+        包括（共享配额）：
         - ANT/claude-sonnet-4-5
         - ANT/claude-sonnet-4-5-thinking
+
+        注意：普通版和 thinking 版共享配额，用完任何一个整个系列都会 429
         """
         if not model_name:
             return False
@@ -80,12 +82,13 @@ class AntigravityUsageStats:
         """
         检查是否是 Gemini 3 Pro 系列模型
 
-        包括：
+        包括（共享配额）：
         - ANT/gemini-3-pro
         - ANT/gemini-3-pro-high
         - ANT/gemini-3-pro-low
         - ANT/gemini-3-pro-image
-        等所有 gemini-3 开头的模型
+
+        注意：所有 gemini-3 系列模型共享配额，用完任何一个整个系列都会 429
         """
         if not model_name:
             return False
@@ -120,9 +123,9 @@ class AntigravityUsageStats:
                     "gemini_3_pro_calls": account.get("gemini_3_pro_calls", 0),
                     "total_calls": account.get("total_calls", 0),
                     "next_reset_time": account.get("next_reset_time"),
-                    "daily_limit_claude": account.get("daily_limit_claude", 100),
-                    "daily_limit_gemini": account.get("daily_limit_gemini", 100),
-                    "daily_limit_total": account.get("daily_limit_total", 500),
+                    "daily_limit_claude": account.get("daily_limit_claude", 200),
+                    "daily_limit_gemini": account.get("daily_limit_gemini", 200),
+                    "daily_limit_total": account.get("daily_limit_total", 1000),
                 }
 
                 self._stats_cache[virtual_filename] = usage_data
@@ -163,9 +166,9 @@ class AntigravityUsageStats:
                             "gemini_3_pro_calls": stats.get("gemini_3_pro_calls", 0),
                             "total_calls": stats.get("total_calls", 0),
                             "next_reset_time": stats.get("next_reset_time"),
-                            "daily_limit_claude": stats.get("daily_limit_claude", 100),
-                            "daily_limit_gemini": stats.get("daily_limit_gemini", 100),
-                            "daily_limit_total": stats.get("daily_limit_total", 500),
+                            "daily_limit_claude": stats.get("daily_limit_claude", 200),
+                            "daily_limit_gemini": stats.get("daily_limit_gemini", 200),
+                            "daily_limit_total": stats.get("daily_limit_total", 1000),
                         })
                         break
 
@@ -188,9 +191,9 @@ class AntigravityUsageStats:
                 "gemini_3_pro_calls": 0,
                 "total_calls": 0,
                 "next_reset_time": next_reset.isoformat(),
-                "daily_limit_claude": 100,
-                "daily_limit_gemini": 100,
-                "daily_limit_total": 500,
+                "daily_limit_claude": 200,
+                "daily_limit_gemini": 200,
+                "daily_limit_total": 1000,
             }
             self._cache_dirty = True
 
@@ -262,9 +265,9 @@ class AntigravityUsageStats:
 
                 log.debug(
                     f"Antigravity usage recorded - Account: {virtual_filename}, Model: {model_name}, "
-                    f"Claude: {stats['claude_sonnet_4_5_calls']}/{stats.get('daily_limit_claude', 100)}, "
-                    f"Gemini: {stats['gemini_3_pro_calls']}/{stats.get('daily_limit_gemini', 100)}, "
-                    f"Total: {stats['total_calls']}/{stats.get('daily_limit_total', 500)}"
+                    f"Claude: {stats['claude_sonnet_4_5_calls']}/{stats.get('daily_limit_claude', 200)}, "
+                    f"Gemini: {stats['gemini_3_pro_calls']}/{stats.get('daily_limit_gemini', 200)}, "
+                    f"Total: {stats['total_calls']}/{stats.get('daily_limit_total', 1000)}"
                 )
 
             except Exception as e:
@@ -298,17 +301,17 @@ class AntigravityUsageStats:
                 is_gemini = self._is_gemini_3_pro(model_name)
 
                 # Check total limit first
-                if stats["total_calls"] >= stats.get("daily_limit_total", 500):
-                    return False, f"总调用次数已达每日限制 ({stats['total_calls']}/{stats.get('daily_limit_total', 500)})"
+                if stats["total_calls"] >= stats.get("daily_limit_total", 1000):
+                    return False, f"总调用次数已达每日限制 ({stats['total_calls']}/{stats.get('daily_limit_total', 1000)})"
 
-                # Check model-specific limits
+                # Check model-specific limits (按系列检查，系列内所有模型共享配额)
                 if is_claude:
-                    if stats["claude_sonnet_4_5_calls"] >= stats.get("daily_limit_claude", 100):
-                        return False, f"Claude Sonnet 4.5 调用次数已达每日限制 ({stats['claude_sonnet_4_5_calls']}/{stats.get('daily_limit_claude', 100)})"
+                    if stats["claude_sonnet_4_5_calls"] >= stats.get("daily_limit_claude", 200):
+                        return False, f"Claude Sonnet 4.5 系列调用次数已达每日限制 ({stats['claude_sonnet_4_5_calls']}/{stats.get('daily_limit_claude', 200)})"
 
                 elif is_gemini:
-                    if stats["gemini_3_pro_calls"] >= stats.get("daily_limit_gemini", 100):
-                        return False, f"Gemini 3 Pro 调用次数已达每日限制 ({stats['gemini_3_pro_calls']}/{stats.get('daily_limit_gemini', 100)})"
+                    if stats["gemini_3_pro_calls"] >= stats.get("daily_limit_gemini", 200):
+                        return False, f"Gemini 3 Pro 系列调用次数已达每日限制 ({stats['gemini_3_pro_calls']}/{stats.get('daily_limit_gemini', 200)})"
 
                 return True, "配额可用"
 
@@ -330,9 +333,9 @@ class AntigravityUsageStats:
                     "claude_sonnet_4_5_calls": stats.get("claude_sonnet_4_5_calls", 0),
                     "gemini_3_pro_calls": stats.get("gemini_3_pro_calls", 0),
                     "total_calls": stats.get("total_calls", 0),
-                    "daily_limit_claude": stats.get("daily_limit_claude", 100),
-                    "daily_limit_gemini": stats.get("daily_limit_gemini", 100),
-                    "daily_limit_total": stats.get("daily_limit_total", 500),
+                    "daily_limit_claude": stats.get("daily_limit_claude", 200),
+                    "daily_limit_gemini": stats.get("daily_limit_gemini", 200),
+                    "daily_limit_total": stats.get("daily_limit_total", 1000),
                     "next_reset_time": stats.get("next_reset_time"),
                 }
             else:
@@ -344,9 +347,9 @@ class AntigravityUsageStats:
                         "claude_sonnet_4_5_calls": stats.get("claude_sonnet_4_5_calls", 0),
                         "gemini_3_pro_calls": stats.get("gemini_3_pro_calls", 0),
                         "total_calls": stats.get("total_calls", 0),
-                        "daily_limit_claude": stats.get("daily_limit_claude", 100),
-                        "daily_limit_gemini": stats.get("daily_limit_gemini", 100),
-                        "daily_limit_total": stats.get("daily_limit_total", 500),
+                        "daily_limit_claude": stats.get("daily_limit_claude", 200),
+                        "daily_limit_gemini": stats.get("daily_limit_gemini", 200),
+                        "daily_limit_total": stats.get("daily_limit_total", 1000),
                         "next_reset_time": stats.get("next_reset_time"),
                     }
 

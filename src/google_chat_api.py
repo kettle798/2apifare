@@ -42,6 +42,35 @@ def _create_error_response(message: str, status_code: int = 500) -> Response:
     )
 
 
+def _merge_safety_settings(user_settings: list = None) -> list:
+    """
+    合并用户的安全设置和默认安全设置。
+    采用增量补充策略：只添加用户未配置的默认设置项，避免覆盖用户自定义设置。
+
+    Args:
+        user_settings: 用户提供的安全设置列表，可以为 None
+
+    Returns:
+        合并后的安全设置列表
+    """
+    if user_settings is None:
+        # 用户未提供任何安全设置，返回全部默认设置
+        return DEFAULT_SAFETY_SETTINGS.copy()
+
+    # 提取用户已配置的 category 集合
+    user_categories = {setting.get("category") for setting in user_settings if "category" in setting}
+
+    # 创建合并后的设置列表（从用户设置开始）
+    merged_settings = user_settings.copy()
+
+    # 只追加用户未配置的默认设置项
+    for default_setting in DEFAULT_SAFETY_SETTINGS:
+        if default_setting.get("category") not in user_categories:
+            merged_settings.append(default_setting)
+
+    return merged_settings
+
+
 async def _handle_api_error(
     credential_manager: CredentialManager,
     status_code: int,
@@ -80,6 +109,76 @@ async def _handle_api_error(
 
         # 切换到下一个凭证
         await credential_manager.force_rotate_credential()
+
+
+# ============ 辅助函数（消除重复代码，提高可维护性） ============
+
+
+async def _check_should_auto_ban(status_code: int) -> bool:
+    """检查是否应该触发自动封禁
+
+    Args:
+        status_code: HTTP 状态码
+
+    Returns:
+        bool: True 表示应该触发自动封禁，False 表示不需要
+    """
+    return (
+        await get_auto_ban_enabled()
+        and status_code in await get_auto_ban_error_codes()
+    )
+
+
+async def _handle_auto_ban(
+    credential_manager: CredentialManager,
+    status_code: int,
+    credential_name: str
+) -> None:
+    """处理自动封禁：禁用凭证并轮换
+
+    Args:
+        credential_manager: 凭证管理器实例
+        status_code: HTTP 状态码
+        credential_name: 凭证文件名
+    """
+    if credential_manager and credential_name:
+        log.warning(
+            f"[AUTO_BAN] Status {status_code} triggers auto-ban, "
+            f"disabling credential: {credential_name}"
+        )
+        await credential_manager.set_cred_disabled(credential_name, True)
+        await credential_manager.force_rotate_credential()
+
+
+async def _get_next_credential(
+    credential_manager: CredentialManager,
+    payload: dict,
+    use_public_api: bool,
+    target_url: str
+):
+    """获取下一个可用凭证并准备请求参数
+
+    Args:
+        credential_manager: 凭证管理器实例
+        payload: 请求 payload
+        use_public_api: 是否使用公共 API
+        target_url: 目标 URL
+
+    Returns:
+        tuple: (current_file, credential_data, headers, final_post_data, target_url)
+        None: 没有可用凭证
+    """
+    new_credential_result = await credential_manager.get_valid_credential()
+    if new_credential_result:
+        current_file, credential_data = new_credential_result
+        headers, updated_payload, target_url = (
+            await _prepare_request_headers_and_payload(
+                payload, credential_data, use_public_api, target_url
+            )
+        )
+        final_post_data = json.dumps(updated_payload)
+        return current_file, credential_data, headers, final_post_data, target_url
+    return None
 
 
 async def _prepare_request_headers_and_payload(
@@ -215,18 +314,12 @@ async def send_gemini_request(
                             if credential_manager:
                                 # 429错误时强制轮换凭证，不增加调用计数
                                 await credential_manager.force_rotate_credential()
-                                # 重新获取凭证和headers（凭证可能已轮换）
-                                new_credential_result = (
-                                    await credential_manager.get_valid_credential()
+                                # 获取下一个凭证
+                                next_cred_result = await _get_next_credential(
+                                    credential_manager, payload, use_public_api, target_url
                                 )
-                                if new_credential_result:
-                                    current_file, credential_data = new_credential_result
-                                    headers, updated_payload, target_url = (
-                                        await _prepare_request_headers_and_payload(
-                                            payload, credential_data, use_public_api, target_url
-                                        )
-                                    )
-                                    final_post_data = json.dumps(updated_payload)
+                                if next_cred_result:
+                                    current_file, credential_data, headers, final_post_data, target_url = next_cred_result
                             await asyncio.sleep(retry_interval)
                             continue  # 跳出内层处理，继续外层循环重试
                         else:
@@ -278,25 +371,23 @@ async def send_gemini_request(
                         await client.aclose()
 
                         # 检查是否是自动封禁错误码（403, 401等）且可以重试
-                        auto_ban_error_codes = await get_auto_ban_error_codes()
-                        is_auto_ban_error = resp.status_code in auto_ban_error_codes
+                        should_auto_ban = await _check_should_auto_ban(resp.status_code)
 
-                        if is_auto_ban_error and credential_manager and attempt < max_retries:
-                            # 403/401等错误：切换凭证并重试
+                        if should_auto_ban and credential_manager and attempt < max_retries:
+                            # 403/401等错误：封禁当前凭证并切换到下一个凭证重试
                             log.warning(
                                 f"[RETRY] {resp.status_code} error encountered, rotating credential and retrying ({attempt + 1}/{max_retries})"
                             )
-                            await credential_manager.force_rotate_credential()
-                            # 重新获取凭证和headers
-                            new_credential_result = await credential_manager.get_valid_credential()
-                            if new_credential_result:
-                                current_file, credential_data = new_credential_result
-                                headers, updated_payload, target_url = (
-                                    await _prepare_request_headers_and_payload(
-                                        payload, credential_data, use_public_api, target_url
-                                    )
-                                )
-                                final_post_data = json.dumps(updated_payload)
+                            # 禁用当前凭证并轮换
+                            await _handle_auto_ban(credential_manager, resp.status_code, current_file)
+
+                            # 获取下一个凭证
+                            next_cred_result = await _get_next_credential(
+                                credential_manager, payload, use_public_api, target_url
+                            )
+                            if next_cred_result:
+                                current_file, credential_data, headers, final_post_data, target_url = next_cred_result
+
                             await asyncio.sleep(0.5)  # 短暂延迟后重试
                             continue  # 继续循环重试
 
@@ -361,18 +452,12 @@ async def send_gemini_request(
                             if credential_manager:
                                 # 429错误时强制轮换凭证，不增加调用计数
                                 await credential_manager.force_rotate_credential()
-                                # 重新获取凭证和headers（凭证可能已轮换）
-                                new_credential_result = (
-                                    await credential_manager.get_valid_credential()
+                                # 获取下一个凭证
+                                next_cred_result = await _get_next_credential(
+                                    credential_manager, payload, use_public_api, target_url
                                 )
-                                if new_credential_result:
-                                    current_file, credential_data = new_credential_result
-                                    headers, updated_payload, target_url = (
-                                        await _prepare_request_headers_and_payload(
-                                            payload, credential_data, use_public_api, target_url
-                                        )
-                                    )
-                                    final_post_data = json.dumps(updated_payload)
+                                if next_cred_result:
+                                    current_file, credential_data, headers, final_post_data, target_url = next_cred_result
                             await asyncio.sleep(retry_interval)
                             continue
                         else:
@@ -384,30 +469,28 @@ async def send_gemini_request(
                         # 非429错误或成功响应，检查是否需要重试
                         if resp.status_code != 200:
                             # 检查是否是自动封禁错误码（403, 401等）
-                            auto_ban_error_codes = await get_auto_ban_error_codes()
-                            is_auto_ban_error = resp.status_code in auto_ban_error_codes
+                            should_auto_ban = await _check_should_auto_ban(resp.status_code)
 
-                            if is_auto_ban_error and credential_manager and attempt < max_retries:
+                            if should_auto_ban and credential_manager and attempt < max_retries:
                                 # 记录错误
                                 if current_file:
                                     await credential_manager.record_api_call_result(
                                         current_file, False, resp.status_code
                                     )
-                                # 403/401等错误：切换凭证并重试
+                                # 403/401等错误：封禁当前凭证并切换到下一个凭证重试
                                 log.warning(
                                     f"[RETRY] {resp.status_code} error encountered, rotating credential and retrying ({attempt + 1}/{max_retries})"
                                 )
-                                await credential_manager.force_rotate_credential()
-                                # 重新获取凭证和headers
-                                new_credential_result = await credential_manager.get_valid_credential()
-                                if new_credential_result:
-                                    current_file, credential_data = new_credential_result
-                                    headers, updated_payload, target_url = (
-                                        await _prepare_request_headers_and_payload(
-                                            payload, credential_data, use_public_api, target_url
-                                        )
-                                    )
-                                    final_post_data = json.dumps(updated_payload)
+                                # 禁用当前凭证并轮换
+                                await _handle_auto_ban(credential_manager, resp.status_code, current_file)
+
+                                # 获取下一个凭证
+                                next_cred_result = await _get_next_credential(
+                                    credential_manager, payload, use_public_api, target_url
+                                )
+                                if next_cred_result:
+                                    current_file, credential_data, headers, final_post_data, target_url = next_cred_result
+
                                 await asyncio.sleep(0.5)  # 短暂延迟后重试
                                 continue  # 继续循环重试
 
@@ -647,9 +730,10 @@ def build_gemini_payload_from_native(native_request: dict, model_from_path: str)
     # 创建请求副本以避免修改原始数据
     request_data = native_request.copy()
 
-    # 应用默认安全设置（如果未指定）
-    if "safetySettings" not in request_data:
-        request_data["safetySettings"] = DEFAULT_SAFETY_SETTINGS
+    # 合并安全设置（增量补充用户未配置的默认设置，避免覆盖用户自定义设置）
+    request_data["safetySettings"] = _merge_safety_settings(
+        request_data.get("safetySettings")
+    )
 
     # 确保generationConfig存在
     if "generationConfig" not in request_data:

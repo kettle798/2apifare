@@ -707,6 +707,13 @@ async def upload_credentials(
                         except Exception as e:
                             log.warning(f"Failed to create default state for {filename}: {e}")
 
+                        # Immediately add to rotation queue (event-driven, no polling needed)
+                        try:
+                            await credential_manager.add_credential(filename, credential_data)
+                            log.info(f"[INSTANT] Gemini credential {filename} immediately added to rotation queue")
+                        except Exception as e:
+                            log.warning(f"Failed to add to rotation queue (does not affect storage): {e}")
+
                         log.debug(f"成功上传凭证文件: {filename}")
                         return {"filename": filename, "status": "success", "message": "上传成功"}
                     else:
@@ -780,7 +787,15 @@ async def upload_credentials(
 
 @router.get("/creds/status")
 async def get_creds_status(token: str = Depends(verify_token)):
-    """获取所有凭证文件的状态"""
+    """
+    获取所有凭证文件的状态（仅返回关键元数据）
+
+    Returns:
+        {
+            "creds": {...},        # 所有凭证的元数据
+            "total": 722,          # 总凭证数
+        }
+    """
     try:
         await ensure_credential_manager_initialized()
 
@@ -791,11 +806,14 @@ async def get_creds_status(token: str = Depends(verify_token)):
         all_credentials = await storage_adapter.list_credentials()
         all_states = await credential_manager.get_creds_status()
 
+        total = len(all_credentials)
+        log.debug(f"加载所有凭证元数据: 共 {total} 个凭证")
+
         # 获取后端信息（一次性获取，避免重复查询）
         backend_info = await storage_adapter.get_backend_info()
         backend_type = backend_info.get("backend_type", "unknown")
 
-        # 并发处理所有凭证的数据获取（状态已获取，无需重复处理）
+        # 并发处理所有凭证的数据获取
         async def process_credential_data(filename):
             """并发处理单个凭证的数据获取"""
             file_status = all_states.get(filename)
@@ -828,19 +846,20 @@ async def get_creds_status(token: str = Depends(verify_token)):
                     }
 
             try:
-                # 从存储获取凭证数据
-                credential_data = await storage_adapter.get_credential(filename)
-                if credential_data:
+                # 只检查凭证是否存在，不读取完整内容（节省内存）
+                credential_exists = await storage_adapter.get_credential(filename) is not None
+
+                if credential_exists:
                     # 判断凭证类型：userID_ 前缀或 accounts.toml 是 ANT 凭证，其他是 CLI 凭证
                     credential_type = "ant" if (filename.startswith("userID_") or "accounts.toml" in filename.lower()) else "cli"
 
                     result = {
                         "status": file_status,
-                        "content": credential_data,
                         "filename": os.path.basename(filename),
                         "backend_type": backend_type,  # 复用backend信息
                         "user_email": file_status.get("user_email"),
-                        "credential_type": credential_type,  # 新增：凭证类型标识
+                        "credential_type": credential_type,  # 凭证类型标识
+                        "has_content": True,  # 标记凭证存在
                     }
 
                     # 如果是文件模式，添加文件元数据
@@ -856,8 +875,8 @@ async def get_creds_status(token: str = Depends(verify_token)):
                 else:
                     return filename, {
                         "status": file_status,
-                        "content": None,
                         "filename": os.path.basename(filename),
+                        "has_content": False,
                         "error": "凭证数据不存在",
                     }
 
@@ -870,8 +889,7 @@ async def get_creds_status(token: str = Depends(verify_token)):
                     "error": str(e),
                 }
 
-        # 并发处理所有凭证数据获取
-        log.debug(f"开始并发获取 {len(all_credentials)} 个凭证数据...")
+        # 并发处理所有凭证数据获取（仅元数据，不含完整JSON内容）
         concurrent_tasks = [process_credential_data(filename) for filename in all_credentials]
         results = await asyncio.gather(*concurrent_tasks, return_exceptions=True)
 
@@ -884,7 +902,10 @@ async def get_creds_status(token: str = Depends(verify_token)):
                 filename, credential_info = result
                 creds_info[filename] = credential_info
 
-        return JSONResponse(content={"creds": creds_info})
+        return JSONResponse(content={
+            "creds": creds_info,
+            "total": total
+        })
 
     except Exception as e:
         log.error(f"获取凭证状态失败: {e}")
@@ -2092,21 +2113,66 @@ class IPStatusUpdateRequest(BaseModel):
     admin_password: Optional[str] = None  # 启用 IP 时需要管理员密码
 
 
+@router.get("/ip/ranking")
+async def get_ip_ranking(
+    rank_by: str = "today",
+    page: int = 1,
+    page_size: int = 20,
+    include_banned: bool = False,
+    token: str = Depends(verify_token)
+):
+    """
+    获取 IP 排行榜（分页）
+
+    Args:
+        rank_by: 排序依据 ("today" 今日请求 或 "total" 总请求)
+        page: 页码（从1开始）
+        page_size: 每页数量（默认20）
+        include_banned: 是否包含被封禁的IP
+
+    Returns:
+        分页的排名榜数据
+    """
+    try:
+        from .ip_manager import get_ip_manager
+
+        ip_manager = await get_ip_manager()
+        ranking_data = await ip_manager.get_ip_ranking(
+            rank_by=rank_by,
+            page=page,
+            page_size=page_size,
+            include_banned=include_banned
+        )
+
+        return JSONResponse(content={"success": True, "data": ranking_data})
+    except Exception as e:
+        log.error(f"获取 IP 排名榜失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/ip/update-status")
-async def update_ip_status(request: IPStatusUpdateRequest, token: str = Depends(verify_token)):
+async def update_ip_status(
+    req: IPStatusUpdateRequest,
+    http_request: Request,
+    token: str = Depends(verify_token)
+):
     """
     更新 IP 状态
 
     权限机制（狼人杀模式 - 每分钟请求次数）：
     - 启用 IP (status=active)：需要管理员密码
-    - 封禁 IP (status=banned)：无需密码
+    - 封禁 IP (status=banned)：无需密码，但有限制：
+      * 目标IP今日请求必须≥50次（保护新用户）
+      * 操作者30分钟内最多封禁5次（防止大规模封禁）
     - 限速 IP (status=rate_limited)：
       * 首次设置或减少次数（收紧限制）：无需密码
       * 增加次数（放松限制）：需要管理员密码
       注：后端存储为秒数，秒数越小 = 每分钟次数越多 = 限制越松
 
     Args:
-        request: 包含 IP 地址、状态和可选管理员密码的请求
+        req: 包含 IP 地址、状态和可选管理员密码的请求
+        http_request: FastAPI Request对象（用于获取操作者IP）
+        token: 认证令牌
 
     Returns:
         Success message
@@ -2116,29 +2182,32 @@ async def update_ip_status(request: IPStatusUpdateRequest, token: str = Depends(
 
         ip_manager = await get_ip_manager()
 
+        # 获取操作者IP地址
+        operator_ip = http_request.client.host if http_request.client else None
+
         # 启用 IP 需要验证管理员密码
-        if request.status == "active":
-            if not request.admin_password:
+        if req.status == "active":
+            if not req.admin_password:
                 raise HTTPException(status_code=403, detail="启用 IP 需要提供管理员密码")
 
             # 验证管理员密码
             correct_admin_password = await config.get_admin_password()
-            if request.admin_password != correct_admin_password:
+            if req.admin_password != correct_admin_password:
                 raise HTTPException(status_code=403, detail="管理员密码错误")
 
         # 限速操作：检查是否放松限制（秒数减少 = 每分钟次数增加）
-        elif request.status == "rate_limited" and request.rate_limit_seconds:
+        elif req.status == "rate_limited" and req.rate_limit_seconds:
             # 获取当前 IP 的限速设置
-            current_stats = await ip_manager.get_ip_stats(request.ip)
+            current_stats = await ip_manager.get_ip_stats(req.ip)
             current_rate_limit = current_stats.get("rate_limit_seconds", 0) if current_stats else 0
 
             # 如果减少限速间隔（秒数变小 = 每分钟次数增加 = 放松限制），需要管理员密码
-            if current_rate_limit > 0 and request.rate_limit_seconds < current_rate_limit:
+            if current_rate_limit > 0 and req.rate_limit_seconds < current_rate_limit:
                 # 计算每分钟次数用于提示
                 current_requests_per_min = round(60 / current_rate_limit)
-                new_requests_per_min = round(60 / request.rate_limit_seconds)
+                new_requests_per_min = round(60 / req.rate_limit_seconds)
 
-                if not request.admin_password:
+                if not req.admin_password:
                     raise HTTPException(
                         status_code=403,
                         detail=f"增加请求次数需要管理员密码（当前{current_requests_per_min}次/分 → 新{new_requests_per_min}次/分）",
@@ -2146,11 +2215,15 @@ async def update_ip_status(request: IPStatusUpdateRequest, token: str = Depends(
 
                 # 验证管理员密码
                 correct_admin_password = await config.get_admin_password()
-                if request.admin_password != correct_admin_password:
+                if req.admin_password != correct_admin_password:
                     raise HTTPException(status_code=403, detail="管理员密码错误")
 
-        success = await ip_manager.set_ip_status(
-            ip=request.ip, status=request.status, rate_limit_seconds=request.rate_limit_seconds
+        # 调用 set_ip_status（现在返回 tuple）
+        success, error_msg = await ip_manager.set_ip_status(
+            ip=req.ip,
+            status=req.status,
+            rate_limit_seconds=req.rate_limit_seconds,
+            operator_ip=operator_ip  # 传递操作者IP
         )
 
         if success:
@@ -2159,14 +2232,15 @@ async def update_ip_status(request: IPStatusUpdateRequest, token: str = Depends(
                 "banned": "封禁",
                 "rate_limited": "限速",
             }
-            status_name = status_names.get(request.status, request.status)
-            message = f"已将 IP {request.ip} 设置为{status_name}"
-            if request.status == "rate_limited" and request.rate_limit_seconds:
-                requests_per_min = round(60 / request.rate_limit_seconds)
+            status_name = status_names.get(req.status, req.status)
+            message = f"已将 IP {req.ip} 设置为{status_name}"
+            if req.status == "rate_limited" and req.rate_limit_seconds:
+                requests_per_min = round(60 / req.rate_limit_seconds)
                 message += f"（{requests_per_min}次/分钟）"
             return JSONResponse(content={"success": True, "message": message})
         else:
-            raise HTTPException(status_code=500, detail="更新 IP 状态失败")
+            # 使用返回的错误信息
+            raise HTTPException(status_code=400, detail=error_msg or "更新 IP 状态失败")
 
     except HTTPException:
         raise

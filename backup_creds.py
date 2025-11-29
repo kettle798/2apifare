@@ -96,7 +96,8 @@ class CredsBackup:
                 cwd=cwd or self.backup_repo_dir,
                 check=True,
                 capture_output=True,
-                text=True
+                text=True,
+                encoding='utf-8'  # [FIX] 明确指定 UTF-8 编码，避免 Windows GBK 解码错误
             )
             return result
         except subprocess.CalledProcessError as e:
@@ -249,7 +250,8 @@ class CredsBackup:
             ["git", "status", "--porcelain"],
             cwd=self.backup_repo_dir,
             capture_output=True,
-            text=True
+            text=True,
+            encoding='utf-8'  # [FIX] 明确指定 UTF-8 编码，避免 Windows GBK 解码错误
         )
 
         if not status.stdout.strip():

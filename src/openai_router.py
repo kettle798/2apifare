@@ -53,6 +53,49 @@ async def get_credential_manager():
     yield credential_manager
 
 
+# ============ Antigravity 辅助函数（错误处理和重试）============
+
+
+def _extract_error_code_from_exception(error_message: str) -> int:
+    """从异常消息中提取 HTTP 错误码
+
+    Args:
+        error_message: 异常消息字符串
+
+    Returns:
+        int: HTTP 错误码，如果无法识别则返回 None
+
+    Note:
+        使用字符串匹配识别错误码，未来可优化为从实际 HTTP 响应中提取
+    """
+    if "403" in error_message or "403 Forbidden" in error_message:
+        return 403
+    elif "401" in error_message or "401 Unauthorized" in error_message:
+        return 401
+    elif "404" in error_message:
+        return 404
+    elif "429" in error_message:
+        return 429
+    elif "500" in error_message:
+        return 500
+    return None
+
+
+async def _check_should_retry_antigravity(error_code: int, auto_ban_error_codes: list) -> bool:
+    """检查 Antigravity 错误是否应该重试
+
+    Args:
+        error_code: HTTP 错误码
+        auto_ban_error_codes: 自动封禁的错误码列表
+
+    Returns:
+        bool: True 表示应该重试，False 表示不重试
+    """
+    if error_code is None:
+        return False
+    return error_code in auto_ban_error_codes
+
+
 async def authenticate(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
     """验证用户密码"""
     from config import get_api_password
@@ -707,23 +750,17 @@ async def handle_antigravity_request(request_data: ChatCompletionRequest):
                         error_message = str(e)
                         log.error(f"[Attempt {attempt + 1}/{max_retries}] Antigravity streaming error: {error_message}")
 
-                        # 提取错误码
-                        error_code = None
-                        if "403" in error_message or "403 Forbidden" in error_message:
-                            error_code = 403
-                        elif "401" in error_message or "401 Unauthorized" in error_message:
-                            error_code = 401
-                        elif "404" in error_message:
-                            error_code = 404
+                        # 提取错误码（使用辅助函数）
+                        error_code = _extract_error_code_from_exception(error_message)
 
-                        # 标记凭证错误（会自动禁用）
+                        # 标记凭证错误（传递完整错误消息用于 429 解析）
                         if error_code and credential_result:
-                            await ant_cred_mgr.mark_credential_error(virtual_filename, error_code)
+                            await ant_cred_mgr.mark_credential_error(virtual_filename, error_code, error_message)
 
-                        # 检查是否需要重试
-                        is_auto_ban_error = error_code in auto_ban_error_codes if error_code else False
+                        # 检查是否需要重试（使用辅助函数）
+                        should_retry = await _check_should_retry_antigravity(error_code, auto_ban_error_codes)
 
-                        if is_auto_ban_error and attempt < max_retries - 1:
+                        if should_retry and attempt < max_retries - 1:
                             # 403/401 等错误：切换凭证并重试
                             log.warning(f"[RETRY] {error_code} error encountered, rotating credential and retrying ({attempt + 1}/{max_retries})")
                             await ant_cred_mgr.force_rotate_credential()

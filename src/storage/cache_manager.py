@@ -64,7 +64,7 @@ class UnifiedCacheManager:
 
         # 性能监控
         self._operation_count = 0
-        self._operation_times = deque(maxlen=1000)
+        self._operation_times = deque(maxlen=1)
 
     async def start(self):
         """启动缓存管理器"""
