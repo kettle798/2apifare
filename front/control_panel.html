@@ -8546,11 +8546,17 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                 return; // 用户取消
             }
 
-            const requestsPerMin = parseInt(requestsInput);
+            let requestsPerMin = parseInt(requestsInput);
 
-            if (isNaN(requestsPerMin) || requestsPerMin < 1 || requestsPerMin > 60) {
-                showStatus('每分钟请求次数必须在 1-60 之间', 'error');
+            // 验证范围：允许 0-60
+            if (isNaN(requestsPerMin) || requestsPerMin < 0 || requestsPerMin > 60) {
+                showStatus('每分钟请求次数必须在 0-60 之间', 'error');
                 return;
+            }
+
+            // 如果输入 0，自动转换为 1（最小限速）
+            if (requestsPerMin === 0) {
+                requestsPerMin = 1;
             }
 
             // 🎮 狼人杀机制：增加请求次数（放松限制）需要管理员密码
