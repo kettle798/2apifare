@@ -8548,13 +8548,10 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
 
             const requestsPerMin = parseInt(requestsInput);
 
-            if (isNaN(requestsPerMin) || requestsPerMin <= 0) {
-                showStatus('每分钟请求次数必须是大于0的数字', 'error');
+            if (isNaN(requestsPerMin) || requestsPerMin < 1 || requestsPerMin > 60) {
+                showStatus('每分钟请求次数必须在 1-60 之间', 'error');
                 return;
             }
-
-            // 转换为秒数（后端存储格式）
-            const rateLimitSeconds = Math.round(60 / requestsPerMin);
 
             // 🎮 狼人杀机制：增加请求次数（放松限制）需要管理员密码
             if (currentRateLimit > 0 && requestsPerMin > currentRequestsPerMin) {
@@ -8586,7 +8583,7 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                         body: JSON.stringify({
                             ip: ip,
                             status: 'rate_limited',
-                            rate_limit_seconds: rateLimitSeconds,
+                            requests_per_minute: requestsPerMin,  // 修正：直接发送每分钟次数
                             admin_password: adminPassword.trim()
                         })
                     });
@@ -8626,7 +8623,7 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                     body: JSON.stringify({
                         ip: ip,
                         status: 'rate_limited',
-                        rate_limit_seconds: rateLimitSeconds
+                        requests_per_minute: requestsPerMin  // 修正：直接发送每分钟次数
                     })
                 });
 
