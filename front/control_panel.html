@@ -574,6 +574,27 @@
             display: block;
         }
 
+        /* OAuth和Antigravity认证页面 - 更聚焦的样式 */
+        #oauthTab .auth-url,
+        #antigravityTab .auth-url,
+        #oauthTab .credentials,
+        #antigravityTab .credentials,
+        #oauthTab .status,
+        #antigravityTab .status {
+            background: rgba(35, 45, 60, 0.45);  /* 增加不透明度：0.25 → 0.45 */
+            backdrop-filter: blur(10px);  /* 增加模糊：4px → 10px */
+            -webkit-backdrop-filter: blur(10px);
+        }
+
+        #oauthTab input[type="text"],
+        #oauthTab input[type="url"],
+        #antigravityTab input[type="text"],
+        #antigravityTab input[type="url"] {
+            background: rgba(40, 50, 65, 0.45);  /* 增加不透明度：0.2 → 0.45 */
+            backdrop-filter: blur(8px);  /* 增加模糊：4px → 8px */
+            -webkit-backdrop-filter: blur(8px);
+        }
+
         .upload-area {
             border: 2px dashed rgba(110, 181, 255, 0.3);
             border-radius: 12px;
@@ -4041,7 +4062,7 @@
                 </div>
 
                 <div class="manage-actions">
-                    <button class="refresh-btn" onclick="refreshCredsStatus()">刷新状态</button>
+                    <button class="refresh-btn" onclick="refreshCredsStatus(false, true)">刷新状态</button>
                 </div>
 
                 <!-- 批量操作控件 -->
@@ -4150,7 +4171,7 @@
                 </div>
 
                 <div class="manage-actions">
-                    <button class="refresh-btn" onclick="refreshUsageStats()">刷新统计</button>
+                    <button class="refresh-btn" onclick="refreshUsageStats(true)">刷新统计</button>
                     <button class="btn" style="background-color: #dc3545;"
                         onclick="resetAllUsageStats()">重置所有统计</button>
                 </div>
@@ -4300,7 +4321,7 @@
                 <p>管理系统配置参数，修改后立即生效</p>
 
                 <div class="manage-actions">
-                    <button class="refresh-btn" onclick="loadConfig()">刷新配置</button>
+                    <button class="refresh-btn" onclick="loadConfig(true)">刷新配置</button>
                     <button class="btn" onclick="saveConfig()">保存配置</button>
                 </div>
 
@@ -4848,6 +4869,55 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
             normal: 0,
             disabled: 0
         };
+
+        // 数据缓存管理（减少不必要的服务器请求）
+        let dataCache = {
+            credsStatus: {
+                data: null,
+                timestamp: 0,
+                ttl: 60000  // 缓存有效期：60秒
+            },
+            usageStats: {
+                data: null,
+                timestamp: 0,
+                ttl: 60000  // 缓存有效期：60秒
+            },
+            config: {
+                data: null,
+                timestamp: 0,
+                ttl: 60000  // 缓存有效期：60秒
+            }
+        };
+
+        // 缓存工具函数
+        function isCacheValid(cacheKey) {
+            const cache = dataCache[cacheKey];
+            if (!cache || !cache.data) return false;
+            const now = Date.now();
+            return (now - cache.timestamp) < cache.ttl;
+        }
+
+        function setCache(cacheKey, data) {
+            dataCache[cacheKey].data = data;
+            dataCache[cacheKey].timestamp = Date.now();
+        }
+
+        function getCache(cacheKey) {
+            return dataCache[cacheKey].data;
+        }
+
+        function clearCache(cacheKey) {
+            if (cacheKey) {
+                dataCache[cacheKey].data = null;
+                dataCache[cacheKey].timestamp = 0;
+            } else {
+                // 清空所有缓存
+                Object.keys(dataCache).forEach(key => {
+                    dataCache[key].data = null;
+                    dataCache[key].timestamp = 0;
+                });
+            }
+        }
 
         function showStatus(message, type = 'info') {
             console.log('showStatus called:', message, type);
@@ -5527,15 +5597,36 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
         }
 
         // 凭证文件管理相关函数
-        async function refreshCredsStatus(resetPage = false) {
+        async function refreshCredsStatus(resetPage = false, forceRefresh = false) {
             const credsLoading = document.getElementById('credsLoading');
             const credsList = document.getElementById('credsList');
 
             try {
+                // 检查缓存（除非强制刷新）
+                if (!forceRefresh && isCacheValid('credsStatus')) {
+                    console.log('使用缓存数据（凭证管理）');
+                    const cachedData = getCache('credsStatus');
+                    credsData = cachedData.creds;
+
+                    // 使用缓存数据渲染
+                    calculateStats();
+                    updateStatsDisplay();
+
+                    if (resetPage) {
+                        currentPage = 1;
+                    }
+                    applyFilters();
+                    updatePaginationDisplay();
+                    renderCredsList();
+
+                    credsLoading.style.display = 'none';
+                    return;
+                }
+
                 credsLoading.style.display = 'block';
                 credsList.innerHTML = '';
 
-                console.log('Fetching creds status...');
+                console.log('从服务器获取最新数据（凭证管理）...');
 
                 const response = await fetch('/creds/status', {
                     method: 'GET',
@@ -5548,6 +5639,8 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                 console.log('Creds status data:', data);
 
                 if (response.ok) {
+                    // 保存到缓存
+                    setCache('credsStatus', data);
                     credsData = data.creds;
 
                     // 计算统计数据
@@ -6021,7 +6114,8 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
 
                 if (response.ok) {
                     showStatus(data.message, 'success');
-                    await refreshCredsStatus(); // 刷新状态
+                    clearCache('credsStatus');  // 清除缓存
+                    await refreshCredsStatus(false, true); // 强制刷新状态
                 } else {
                     showStatus(`操作失败: ${data.detail || data.error || '未知错误'}`, 'error');
                 }
@@ -6169,7 +6263,8 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                 
                 if (response.ok) {
                     showStatus(data.message, 'success');
-                    await refreshCredsStatus(); // 刷新状态
+                    clearCache('credsStatus');  // 清除缓存
+                    await refreshCredsStatus(false, true); // 强制刷新状态
                 } else {
                     showStatus(`冻结失败: ${data.detail || data.error || '未知错误'}`, 'error');
                 }
@@ -6199,7 +6294,8 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                 
                 if (response.ok) {
                     showStatus(data.message, 'success');
-                    await refreshCredsStatus(); // 刷新状态
+                    clearCache('credsStatus');  // 清除缓存
+                    await refreshCredsStatus(false, true); // 强制刷新状态
                 } else {
                     showStatus(`解冻失败: ${data.detail || data.error || '未知错误'}`, 'error');
                 }
@@ -6213,13 +6309,29 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
         let currentConfig = {};
         let envLockedFields = new Set();
 
-        async function loadConfig() {
+        async function loadConfig(forceRefresh = false) {
             const configLoading = document.getElementById('configLoading');
             const configForm = document.getElementById('configForm');
 
             try {
+                // 检查缓存（除非强制刷新）
+                if (!forceRefresh && isCacheValid('config')) {
+                    console.log('使用缓存数据（配置管理）');
+                    const cachedData = getCache('config');
+                    currentConfig = cachedData.config;
+                    envLockedFields = new Set(cachedData.env_locked || []);
+
+                    // 使用缓存数据渲染
+                    populateConfigForm();
+                    configForm.classList.remove('hidden');
+                    configLoading.style.display = 'none';
+                    return;
+                }
+
                 configLoading.style.display = 'block';
                 configForm.classList.add('hidden');
+
+                console.log('从服务器获取最新数据（配置管理）...');
 
                 const response = await fetch('/config/get', {
                     method: 'GET',
@@ -6229,6 +6341,8 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                 const data = await response.json();
 
                 if (response.ok) {
+                    // 保存到缓存
+                    setCache('config', data);
                     currentConfig = data.config;
                     envLockedFields = new Set(data.env_locked || []);
 
@@ -6389,7 +6503,8 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                     }
 
                     // 重新加载配置以获取最新状态
-                    setTimeout(() => loadConfig(), 1000);
+                    clearCache('config');  // 清除缓存
+                    setTimeout(() => loadConfig(true), 1000);
                 } else {
                     // 特别处理管理员密码错误（403）
                     if (response.status === 403) {
@@ -6660,7 +6775,8 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                     updateBatchControls();
 
                     // 刷新列表
-                    await refreshCredsStatus();
+                    clearCache('credsStatus');  // 清除缓存
+                    await refreshCredsStatus(false, true);
                 } else {
                     // 特别处理管理员密码错误（403）
                     if (response.status === 403 && action === 'delete') {
@@ -6695,7 +6811,8 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                 if (response.ok && data.user_email) {
                     showStatus(`成功获取邮箱: ${data.user_email}`, 'success');
                     // 刷新凭证状态以更新显示
-                    await refreshCredsStatus();
+                    clearCache('credsStatus');  // 清除缓存
+                    await refreshCredsStatus(false, true);
                 } else {
                     showStatus(data.message || '无法获取用户邮箱', 'error');
                 }
@@ -6726,7 +6843,8 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                 if (response.ok) {
                     showStatus(`邮箱刷新完成：成功获取 ${data.success_count}/${data.total_count} 个邮箱地址`, 'success');
                     // 刷新凭证状态以更新显示
-                    await refreshCredsStatus();
+                    clearCache('credsStatus');  // 清除缓存
+                    await refreshCredsStatus(false, true);
                 } else {
                     showStatus(data.message || '邮箱刷新失败', 'error');
                 }
@@ -6866,7 +6984,8 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                 // 刷新凭证列表（如果有）
                 setTimeout(() => {
                     if (typeof refreshCredsStatus === 'function') {
-                        refreshCredsStatus();
+                        clearCache('credsStatus');  // 清除缓存
+                        refreshCredsStatus(false, true);
                     }
                 }, 1000);
 
@@ -6991,7 +7110,8 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                     // 刷新凭证列表
                     setTimeout(() => {
                         if (typeof refreshCredsStatus === 'function') {
-                            refreshCredsStatus();
+                            clearCache('credsStatus');  // 清除缓存
+                            refreshCredsStatus(false, true);
                         }
                     }, 1000);
                 } else {
@@ -7065,13 +7185,33 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
         let currentEditingFile = '';
 
         // 刷新使用统计
-        async function refreshUsageStats() {
+        async function refreshUsageStats(forceRefresh = false) {
             const usageLoading = document.getElementById('usageLoading');
             const usageList = document.getElementById('usageList');
 
             try {
+                // 检查缓存（除非强制刷新）
+                if (!forceRefresh && isCacheValid('usageStats')) {
+                    console.log('使用缓存数据（使用统计）');
+                    const cachedData = getCache('usageStats');
+                    usageStatsData = cachedData.statsData;
+
+                    // 使用缓存数据渲染
+                    document.getElementById('totalApiCalls').textContent = cachedData.aggregatedData.total_all_model_calls || 0;
+                    document.getElementById('geminiProCalls').textContent = cachedData.aggregatedData.total_gemini_2_5_pro_calls || 0;
+                    document.getElementById('totalFiles').textContent = cachedData.aggregatedData.total_files || 0;
+
+                    currentUsagePage = 1;
+                    renderUsageList();
+
+                    usageLoading.style.display = 'none';
+                    return;
+                }
+
                 usageLoading.style.display = 'block';
                 usageList.innerHTML = '';
+
+                console.log('从服务器获取最新数据（使用统计）...');
 
                 // 获取所有文件的使用统计
                 const [statsResponse, aggregatedResponse] = await Promise.all([
@@ -7089,6 +7229,11 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                 const aggregatedData = await aggregatedResponse.json();
 
                 if (statsResponse.ok && aggregatedResponse.ok) {
+                    // 保存到缓存
+                    setCache('usageStats', {
+                        statsData: statsData.data,
+                        aggregatedData: aggregatedData.data
+                    });
                     usageStatsData = statsData.data;
 
                     // 更新概览统计
@@ -7346,7 +7491,8 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                     showStatus(data.message, 'success');
                     closeLimitsModal();
                     // 刷新统计数据
-                    await refreshUsageStats();
+                    clearCache('usageStats');  // 清除缓存
+                    await refreshUsageStats(true);
                 } else {
                     showStatus(`设置失败: ${data.detail || data.error || '未知错误'}`, 'error');
                 }
@@ -7373,7 +7519,8 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
 
                 if (response.ok) {
                     showStatus(data.message, 'success');
-                    await refreshUsageStats();
+                    clearCache('usageStats');  // 清除缓存
+                    await refreshUsageStats(true);
                 } else {
                     showStatus(`重置失败: ${data.detail || data.error || '未知错误'}`, 'error');
                 }
@@ -7417,7 +7564,8 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
 
                 if (response.ok) {
                     showStatus(data.message, 'success');
-                    await refreshUsageStats();
+                    clearCache('usageStats');  // 清除缓存
+                    await refreshUsageStats(true);
                 } else {
                     showStatus(`重置失败: ${data.detail || data.error || '未知错误'}`, 'error');
                 }
