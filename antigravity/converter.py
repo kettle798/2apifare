@@ -263,7 +263,7 @@ def generate_generation_config(
         'topK': parameters.get('top_k', 50),
         'temperature': parameters.get('temperature', 1),
         'candidateCount': 1,
-        'maxOutputTokens': parameters.get('max_tokens', 8096),
+        # 不设置 maxOutputTokens，让 API 使用默认值（可获得更长输出）
         'stopSequences': [
             '<|user|>',
             '<|bot|>',
@@ -304,17 +304,24 @@ def generate_request_body(
     Returns:
         完整的请求体
     """
+    # 导入模型别名映射
+    from config import ANTIGRAVITY_MODEL_ALIAS
+
     # 判断是否启用 thinking 模式
     enable_thinking = (
         model_name.endswith('-thinking') or
         model_name == 'gemini-2.5-pro' or
         model_name.startswith('gemini-3-pro-') or
         model_name == 'rev19-uic3-1p' or
+        model_name == 'gemini-2.5-computer-use-preview-10-2025' or
         model_name == 'gpt-oss-120b-medium'
     )
 
     # 去除 -thinking 后缀
     actual_model_name = model_name[:-9] if model_name.endswith('-thinking') else model_name
+
+    # 应用模型别名映射（用户友好名称 -> API内部名称）
+    actual_model_name = ANTIGRAVITY_MODEL_ALIAS.get(actual_model_name, actual_model_name)
 
     # 转换消息和工具
     antigravity_messages = openai_messages_to_antigravity(openai_messages)
