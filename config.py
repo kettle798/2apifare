@@ -196,6 +196,7 @@ async def get_retry_429_interval() -> float:
 
 # GeminiCLI 基础模型列表
 BASE_MODELS = [
+    "gemini-3-pro-preview",
     "gemini-2.5-pro-preview-06-05",
     "gemini-2.5-pro",
     "gemini-2.5-flash",

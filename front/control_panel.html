@@ -7953,8 +7953,9 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                 }
             }
 
-            // GeminiCLI - 分为3个独立组
+            // GeminiCLI - 分为4个独立组
             if (data.geminicli && Object.keys(data.geminicli).length > 0) {
+                const gemini3ProModels = [];   // Gemini 3 Pro Preview 系列
                 const proStandardModels = [];  // 标准 2.5-pro（不含 preview-06-05）
                 const proPreviewModels = [];   // preview-06-05 系列
                 const flashModels = [];        // flash 系列
@@ -7962,7 +7963,9 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                 for (const [name, score] of Object.entries(data.geminicli)) {
                     const model = { name, score, desc: getModelDescription(name) };
 
-                    if (name.includes('pro-preview-06-05')) {
+                    if (name.includes('gemini-3-pro-preview')) {
+                        gemini3ProModels.push(model);
+                    } else if (name.includes('pro-preview-06-05')) {
                         proPreviewModels.push(model);
                     } else if (name.includes('pro')) {
                         proStandardModels.push(model);
@@ -7971,12 +7974,33 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                     }
                 }
 
-                // 第一排：标准 Pro 系列
+                // 第一排：Gemini 3 Pro Preview 系列（最新最强）
+                if (gemini3ProModels.length > 0) {
+                    gemini3ProModels.sort((a, b) => b.score - a.score);
+                    html += `<div class="group-header" data-tier="3">
+                        <span>GEMINICLI / GEMINI 3 PRO PREVIEW</span>
+                        <span>TIER 3</span>
+                    </div>`;
+
+                    for (const model of gemini3ProModels) {
+                        html += `<div class="model-row">
+                            <div class="row-info">
+                                <span class="row-name">${model.name}</span>
+                                <span class="row-desc">${model.desc}</span>
+                            </div>
+                            <div class="row-score">${model.score.toFixed(2)}</div>
+                        </div>`;
+                    }
+
+                    html += '<br>';
+                }
+
+                // 第二排：标准 Pro 系列
                 if (proStandardModels.length > 0) {
                     proStandardModels.sort((a, b) => b.score - a.score);
-                    html += `<div class="group-header" data-tier="3">
+                    html += `<div class="group-header" data-tier="4">
                         <span>GEMINICLI / PRO SERIES</span>
-                        <span>TIER 3</span>
+                        <span>TIER 4</span>
                     </div>`;
 
                     for (const model of proStandardModels) {
@@ -7992,12 +8016,12 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                     html += '<br>';
                 }
 
-                // 第二排：Preview 06-05 系列
+                // 第三排：Preview 06-05 系列
                 if (proPreviewModels.length > 0) {
                     proPreviewModels.sort((a, b) => b.score - a.score);
-                    html += `<div class="group-header" data-tier="4">
+                    html += `<div class="group-header" data-tier="5">
                         <span>GEMINICLI / PRO PREVIEW 06-05</span>
-                        <span>TIER 4</span>
+                        <span>TIER 5</span>
                     </div>`;
 
                     for (const model of proPreviewModels) {
@@ -8013,12 +8037,12 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
                     html += '<br>';
                 }
 
-                // 第三排：Flash 系列
+                // 第四排：Flash 系列
                 if (flashModels.length > 0) {
                     flashModels.sort((a, b) => b.score - a.score);
-                    html += `<div class="group-header" data-tier="5">
+                    html += `<div class="group-header" data-tier="6">
                         <span>GEMINICLI / FLASH SERIES</span>
-                        <span>TIER 5</span>
+                        <span>TIER 6</span>
                     </div>`;
 
                     for (const model of flashModels) {
@@ -8042,6 +8066,7 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
             const name = modelName.toLowerCase();
 
             // Antigravity 模型
+            // Antigravity 模型
             if (name.includes('gemini-3-pro-high')) return 'Benchmark Leader · LiveCodeBench 2439';
             if (name.includes('gemini-3-pro-low')) return 'Balanced High-Performance';
             if (name.includes('claude-sonnet-4-5-thinking')) return 'Chain of Thought · Reasoning++';
@@ -8051,6 +8076,12 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
             if (name.includes('gemini-2.5-flash') && !name.includes('lite') && !name.includes('thinking')) return 'Speed Optimized · Cost Effective';
             if (name.includes('gpt-oss-120b')) return 'Open Source 120B · General Purpose';
             if (name.includes('rev19-uic3')) return 'Experimental · Legacy Support';
+
+            // GeminiCLI Gemini 3 Pro Preview 系列（最新CLI模型）
+            if (name.includes('gemini-3-pro-preview-maxthinking')) return 'CLI 3.0 · Extended Reasoning';
+            if (name.includes('gemini-3-pro-preview-nothinking')) return 'CLI 3.0 · Fast Response';
+            if (name.includes('gemini-3-pro-preview-search')) return 'CLI 3.0 · Search Enhanced';
+            if (name.includes('gemini-3-pro-preview')) return 'CLI 3.0 · Latest Generation';
 
             // GeminiCLI Pro - Preview 06-05 系列（更具体的匹配放前面）
             if (name.includes('2.5-pro-preview-06-05-search')) return 'Preview Search · Enhanced RAG';
