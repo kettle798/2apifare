@@ -612,6 +612,26 @@ async def get_antigravity_api_endpoint() -> str:
     )
 
 
+async def get_antigravity_api_endpoint_backup() -> str:
+    """
+    Get Antigravity backup API endpoint for failover.
+
+    用于 Antigravity 端点降级的备用 API 端点。
+    当主端点失败时（429/5xx/网络错误），自动切换到备用端点。
+
+    Environment variable: ANTIGRAVITY_API_ENDPOINT_BACKUP
+    TOML config key: antigravity_api_endpoint_backup
+    Default: 空字符串（不启用备用端点）
+    """
+    return str(
+        await get_config_value(
+            "antigravity_api_endpoint_backup",
+            "",  # 默认为空，不启用备用端点
+            "ANTIGRAVITY_API_ENDPOINT_BACKUP",
+        )
+    )
+
+
 async def get_antigravity_models_endpoint() -> str:
     """
     Get Antigravity models endpoint for fetching available models.

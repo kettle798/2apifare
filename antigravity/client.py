@@ -20,6 +20,111 @@ def extract_host_from_url(url: str) -> str:
     return parsed.netloc
 
 
+async def _stream_generate_content_single(
+    request_body: Dict[str, Any],
+    access_token: str,
+    api_url: str,
+    proxy: Optional[str] = None,
+    timeout: int = 120
+) -> AsyncGenerator[Dict[str, Any], None]:
+    """
+    单端点流式生成内容（内部函数）
+
+    Args:
+        request_body: 请求体
+        access_token: OAuth access token
+        api_url: API 端点 URL
+        proxy: 代理地址
+        timeout: 超时时间（秒）
+
+    Yields:
+        {'type': 'text'|'thinking'|'tool_calls', 'content': str, 'tool_calls': [...]}
+    """
+    api_host = extract_host_from_url(api_url)
+
+    headers = {
+        'Host': api_host,
+        'User-Agent': USER_AGENT,
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+        'Accept-Encoding': 'gzip'
+    }
+
+    thinking_started = False
+    tool_calls = []
+
+    # 配置代理
+    client_kwargs = {'timeout': timeout}
+    if proxy:
+        client_kwargs['proxy'] = proxy
+
+    async with httpx.AsyncClient(**client_kwargs) as client:
+        async with client.stream('POST', api_url, json=request_body, headers=headers) as response:
+            # 检查响应状态
+            if response.status_code == 403:
+                error_text = await response.aread()
+                raise ValueError(f"403 Forbidden - 该账号没有使用权限: {error_text.decode('utf-8', errors='ignore')}")
+
+            if response.status_code != 200:
+                error_text = await response.aread()
+                raise httpx.HTTPError(f"API 请求失败 ({response.status_code}): {error_text.decode('utf-8', errors='ignore')}")
+
+            # 处理 SSE 流
+            async for line in response.aiter_lines():
+                if not line or not line.startswith('data: '):
+                    continue
+
+                json_str = line[6:]
+
+                if json_str.strip() == '[DONE]':
+                    break
+
+                try:
+                    data = json.loads(json_str)
+                    candidates = data.get('response', {}).get('candidates', [])
+                    if not candidates:
+                        continue
+
+                    candidate = candidates[0]
+                    parts = candidate.get('content', {}).get('parts', [])
+
+                    for part in parts:
+                        if part.get('thought') is True:
+                            if not thinking_started:
+                                yield {'type': 'thinking', 'content': '<think>\n'}
+                                thinking_started = True
+                            yield {'type': 'thinking', 'content': part.get('text', '')}
+                        elif 'text' in part:
+                            if thinking_started:
+                                yield {'type': 'thinking', 'content': '\n</think>\n'}
+                                thinking_started = False
+                            yield {'type': 'text', 'content': part.get('text', '')}
+                        elif 'functionCall' in part:
+                            function_call = part['functionCall']
+                            tool_calls.append({
+                                'id': function_call.get('id', ''),
+                                'type': 'function',
+                                'function': {
+                                    'name': function_call.get('name', ''),
+                                    'arguments': function_call.get('args', {}).get('query', '{}')
+                                }
+                            })
+
+                    finish_reason = candidate.get('finishReason')
+                    if finish_reason and tool_calls:
+                        if thinking_started:
+                            yield {'type': 'thinking', 'content': '\n</think>\n'}
+                            thinking_started = False
+                        yield {'type': 'tool_calls', 'tool_calls': tool_calls}
+                        tool_calls = []
+
+                except json.JSONDecodeError:
+                    continue
+                except Exception as e:
+                    log.warning(f"处理 SSE 数据时出错: {e}")
+                    continue
+
+
 async def stream_generate_content(
     request_body: Dict[str, Any],
     access_token: str,
@@ -27,7 +132,9 @@ async def stream_generate_content(
     timeout: int = 120
 ) -> AsyncGenerator[Dict[str, Any], None]:
     """
-    调用 Google Antigravity API 生成内容（流式）
+    调用 Google Antigravity API 生成内容（流式）- 支持多端点降级
+
+    当主端点失败时（429/5xx/网络错误），自动切换到备用端点重试。
 
     Args:
         request_body: 请求体（由 converter.generate_request_body 生成）
@@ -42,112 +149,81 @@ async def stream_generate_content(
         httpx.HTTPError: 请求失败
         ValueError: 响应解析失败
     """
-    # 动态获取 API 端点配置
-    from config import get_antigravity_api_endpoint
+    from config import get_antigravity_api_endpoint, get_antigravity_api_endpoint_backup
 
-    api_url = await get_antigravity_api_endpoint()
-    api_host = extract_host_from_url(api_url)
+    # 获取主端点和备用端点
+    primary_url = await get_antigravity_api_endpoint()
+    backup_url = await get_antigravity_api_endpoint_backup()
 
-    headers = {
-        'Host': api_host,
-        'User-Agent': USER_AGENT,
-        'Authorization': f'Bearer {access_token}',
-        'Content-Type': 'application/json',
-        'Accept-Encoding': 'gzip'
-    }
+    # 构建端点列表
+    endpoints = [primary_url]
+    if backup_url and backup_url.strip():
+        endpoints.append(backup_url)
 
-    thinking_started = False
-    tool_calls = []
+    last_error = None
 
-    try:
-        # 配置代理（httpx 使用 proxy 参数，不是 proxies）
-        client_kwargs = {'timeout': timeout}
-        if proxy:
-            client_kwargs['proxy'] = proxy
+    for endpoint_index, api_url in enumerate(endpoints):
+        endpoint_name = "主端点" if endpoint_index == 0 else "备用端点"
 
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            async with client.stream('POST', api_url, json=request_body, headers=headers) as response:
-                # 检查响应状态
-                if response.status_code == 403:
-                    error_text = await response.aread()
-                    raise ValueError(f"403 Forbidden - 该账号没有使用权限: {error_text.decode('utf-8', errors='ignore')}")
+        try:
+            log.info(f"[Antigravity] 使用{endpoint_name}: {api_url[:50]}...")
 
-                if response.status_code != 200:
-                    error_text = await response.aread()
-                    raise httpx.HTTPError(f"API 请求失败 ({response.status_code}): {error_text.decode('utf-8', errors='ignore')}")
+            async for chunk in _stream_generate_content_single(
+                request_body, access_token, api_url, proxy, timeout
+            ):
+                yield chunk
 
-                # 处理 SSE 流
-                async for line in response.aiter_lines():
-                    # 跳过空行和非 data: 开头的行
-                    if not line or not line.startswith('data: '):
-                        continue
+            # 成功完成，直接返回
+            return
 
-                    # 提取 JSON 数据
-                    json_str = line[6:]  # 去掉 'data: '
+        except httpx.TimeoutException as e:
+            last_error = httpx.HTTPError(f"请求超时（超过 {timeout} 秒）")
+            log.warning(f"[Antigravity] {endpoint_name}超时: {e}")
 
-                    # 跳过 [DONE] 标记
-                    if json_str.strip() == '[DONE]':
-                        break
+            # 超时错误，尝试备用端点
+            if endpoint_index < len(endpoints) - 1:
+                log.info(f"[Antigravity] 切换到备用端点...")
+                continue
+            else:
+                raise last_error
 
-                    try:
-                        data = json.loads(json_str)
+        except httpx.HTTPError as e:
+            last_error = e
+            error_str = str(e)
 
-                        # 提取 candidates[0].content.parts
-                        candidates = data.get('response', {}).get('candidates', [])
-                        if not candidates:
-                            continue
+            # 提取状态码
+            status_code = None
+            if "429" in error_str:
+                status_code = 429
+            elif "500" in error_str or "502" in error_str or "503" in error_str or "504" in error_str:
+                status_code = 500  # 统一标记为 5xx
 
-                        candidate = candidates[0]
-                        parts = candidate.get('content', {}).get('parts', [])
+            log.warning(f"[Antigravity] {endpoint_name}失败 (status={status_code}): {error_str[:100]}")
 
-                        for part in parts:
-                            # Thinking 模式
-                            if part.get('thought') is True:
-                                if not thinking_started:
-                                    yield {'type': 'thinking', 'content': '<think>\n'}
-                                    thinking_started = True
-                                yield {'type': 'thinking', 'content': part.get('text', '')}
+            # 429 或 5xx 错误，尝试备用端点
+            if status_code in (429, 500) and endpoint_index < len(endpoints) - 1:
+                log.info(f"[Antigravity] 切换到备用端点...")
+                continue
+            else:
+                raise
 
-                            # 普通文本
-                            elif 'text' in part:
-                                if thinking_started:
-                                    yield {'type': 'thinking', 'content': '\n</think>\n'}
-                                    thinking_started = False
-                                yield {'type': 'text', 'content': part.get('text', '')}
+        except Exception as e:
+            last_error = e
+            log.warning(f"[Antigravity] {endpoint_name}异常: {e}")
 
-                            # 函数调用
-                            elif 'functionCall' in part:
-                                function_call = part['functionCall']
-                                tool_calls.append({
-                                    'id': function_call.get('id', ''),
-                                    'type': 'function',
-                                    'function': {
-                                        'name': function_call.get('name', ''),
-                                        'arguments': function_call.get('args', {}).get('query', '{}')
-                                    }
-                                })
+            # 网络错误等，尝试备用端点
+            if endpoint_index < len(endpoints) - 1:
+                log.info(f"[Antigravity] 切换到备用端点...")
+                continue
+            else:
+                log.error(f"API 请求失败: {e}")
+                raise
 
-                        # 当遇到 finishReason 时，发送所有收集的工具调用
-                        finish_reason = candidate.get('finishReason')
-                        if finish_reason and tool_calls:
-                            if thinking_started:
-                                yield {'type': 'thinking', 'content': '\n</think>\n'}
-                                thinking_started = False
-                            yield {'type': 'tool_calls', 'tool_calls': tool_calls}
-                            tool_calls = []
-
-                    except json.JSONDecodeError:
-                        # 忽略 JSON 解析错误（可能是不完整的数据）
-                        continue
-                    except Exception as e:
-                        log.warning(f"处理 SSE 数据时出错: {e}")
-                        continue
-
-    except httpx.TimeoutException:
-        raise httpx.HTTPError(f"请求超时（超过 {timeout} 秒）")
-    except Exception as e:
-        log.error(f"API 请求失败: {e}")
-        raise
+    # 所有端点都失败
+    if last_error:
+        raise last_error
+    else:
+        raise httpx.HTTPError("所有端点都失败")
 
 
 async def get_available_models(
