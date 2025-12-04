@@ -758,10 +758,6 @@ async def handle_antigravity_request(request_data: ChatCompletionRequest):
                         # 标记成功
                         await ant_cred_mgr.mark_credential_success(virtual_filename)
 
-                        # 记录使用统计
-                        from .antigravity_usage_stats import record_antigravity_call
-                        await record_antigravity_call(virtual_filename, request_data.model)
-
                         # 成功返回，不再重试
                         return
 

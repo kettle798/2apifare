@@ -47,7 +47,6 @@ from .auth import (
     clear_env_credentials,
 )
 from .credential_manager import CredentialManager
-from .usage_stats import get_usage_stats, get_aggregated_stats, get_usage_stats_instance
 from .storage_adapter import get_storage_adapter
 
 # 创建路由器
@@ -1947,147 +1946,32 @@ async def websocket_logs(websocket: WebSocket):
 
 
 # =============================================================================
-# Usage Statistics API (使用统计API)
+# Usage Statistics API (使用统计API) - 已禁用，保留空接口以兼容前端
 # =============================================================================
 
 
 @router.get("/usage/stats")
 async def get_usage_statistics(filename: Optional[str] = None, token: str = Depends(verify_token)):
     """
-    获取使用统计信息（包括 CLI 和 Antigravity 凭证）
-
-    Args:
-        filename: 可选，指定凭证文件名。如果不提供则返回所有文件的统计
-
-    Returns:
-        usage statistics for the specified file or all files
+    获取使用统计信息 - 已禁用，返回空数据
+    凭证统计功能已移除，因为它只是本地计数，不影响 Google API 的实际配额
     """
-    try:
-        # 获取 CLI 凭证的统计
-        cli_stats = await get_usage_stats(filename)
-
-        # 获取 Antigravity 凭证的统计
-        from .antigravity_usage_stats import get_antigravity_usage_stats_instance
-        antigravity_stats_instance = await get_antigravity_usage_stats_instance()
-        antigravity_stats = await antigravity_stats_instance.get_usage_stats(filename)
-
-        # 合并统计数据
-        if filename:
-            # 如果指定了文件名，返回单个文件的统计
-            combined_stats = cli_stats if cli_stats else antigravity_stats
-        else:
-            # 如果没有指定文件名，合并所有统计
-            combined_stats = {}
-
-            # 添加 CLI 凭证统计
-            if isinstance(cli_stats, dict):
-                combined_stats.update(cli_stats)
-
-            # 添加 Antigravity 凭证统计
-            if isinstance(antigravity_stats, dict):
-                combined_stats.update(antigravity_stats)
-
-        return JSONResponse(content={"success": True, "data": combined_stats})
-    except Exception as e:
-        log.error(f"获取使用统计失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return JSONResponse(content={"success": True, "data": {}})
 
 
 @router.get("/usage/aggregated")
 async def get_aggregated_usage_statistics(token: str = Depends(verify_token)):
     """
-    获取聚合使用统计信息
-
-    Returns:
-        Aggregated statistics across all credential files
+    获取聚合使用统计信息 - 已禁用，返回空数据
     """
-    try:
-        stats = await get_aggregated_stats()
-        return JSONResponse(content={"success": True, "data": stats})
-    except Exception as e:
-        log.error(f"获取聚合统计失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-class UsageLimitsUpdateRequest(BaseModel):
-    filename: str
-    gemini_2_5_pro_limit: Optional[int] = None
-    total_limit: Optional[int] = None
-
-
-@router.post("/usage/update-limits")
-async def update_usage_limits(
-    request: UsageLimitsUpdateRequest, token: str = Depends(verify_token)
-):
-    """
-    更新指定凭证文件的每日使用限制
-
-    Args:
-        request: 包含文件名和新限制值的请求
-
-    Returns:
-        Success message
-    """
-    try:
-        stats_instance = await get_usage_stats_instance()
-
-        await stats_instance.update_daily_limits(
-            filename=request.filename,
-            gemini_2_5_pro_limit=request.gemini_2_5_pro_limit,
-            total_limit=request.total_limit,
-        )
-
-        return JSONResponse(
-            content={"success": True, "message": f"已更新 {request.filename} 的使用限制"}
-        )
-
-    except Exception as e:
-        log.error(f"更新使用限制失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-class UsageResetRequest(BaseModel):
-    filename: Optional[str] = None
-    admin_password: Optional[str] = None
-
-
-@router.post("/usage/reset")
-async def reset_usage_statistics(request: UsageResetRequest, token: str = Depends(verify_token)):
-    """
-    重置使用统计
-
-    Args:
-        request: 包含可选文件名和管理员密码的请求。如果不提供文件名则重置所有统计（需要管理员密码）
-
-    Returns:
-        Success message
-    """
-    try:
-        # 如果是重置所有统计（不提供filename），需要验证管理员密码
-        if not request.filename:
-            if not request.admin_password:
-                raise HTTPException(status_code=403, detail="重置所有统计需要提供管理员密码")
-
-            correct_admin_password = await config.get_admin_password()
-            if request.admin_password != correct_admin_password:
-                raise HTTPException(status_code=403, detail="管理员密码错误")
-
-        stats_instance = await get_usage_stats_instance()
-
-        await stats_instance.reset_stats(filename=request.filename)
-
-        if request.filename:
-            message = f"已重置 {request.filename} 的使用统计"
-        else:
-            message = "已重置所有文件的使用统计"
-
-        return JSONResponse(content={"success": True, "message": message})
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.error(f"重置使用统计失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return JSONResponse(content={
+        "success": True,
+        "data": {
+            "total_gemini_2_5_pro_calls": 0,
+            "total_all_model_calls": 0,
+            "total_files": 0
+        }
+    })
 
 
 # ==================== IP 统计功能 ====================

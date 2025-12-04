@@ -4150,68 +4150,30 @@
                     </button>
                 </div>
 
-                <!-- 凭证统计子标签页 -->
+                <!-- 凭证统计子标签页 - 已禁用 -->
                 <div id="credentialsStatsContent" class="sub-tab-content">
-                    <p>查看每个凭证文件的API调用统计和配额使用情况</p>
-
-                    <!-- 统计概览 -->
-                    <div class="stats-container" id="usageStatsContainer">
-                    <div class="stat-item total">
-                        <span class="stat-number" id="totalApiCalls">0</span>
-                        <span class="stat-label">总调用数</span>
+                    <div class="config-group">
+                        <h4>📊 凭证统计功能已禁用</h4>
+                        <div class="config-info">
+                            <p style="color: #6eb5ff; margin-bottom: 15px;">
+                                凭证统计功能已移除，原因如下：
+                            </p>
+                            <ul>
+                                <li><strong>本地统计无实际作用：</strong>统计的是本地调用次数，不是 Google API 的实际配额</li>
+                                <li><strong>重置配额不会恢复 429：</strong>429 错误是 Google API 返回的，本地重置无法恢复</li>
+                                <li><strong>减少不必要的 I/O：</strong>每次请求都写入存储会增加开销</li>
+                            </ul>
+                            <p style="color: #aaa; margin-top: 15px;">
+                                <strong>凭证管理仍然正常工作：</strong>
+                            </p>
+                            <ul>
+                                <li>✅ 错误码记录（用于自动禁用问题凭证）</li>
+                                <li>✅ 429/403/404 错误时自动切换凭证</li>
+                                <li>✅ Token 过期自动刷新</li>
+                                <li>✅ IP 统计和限流（见 IP 统计标签页）</li>
+                            </ul>
+                        </div>
                     </div>
-                    <div class="stat-item normal" style="border-left: 4px solid #ff6b35;">
-                        <span class="stat-number" id="geminiProCalls">0</span>
-                        <span class="stat-label">Gemini 2.5 Pro</span>
-                    </div>
-                    <div class="stat-item disabled">
-                        <span class="stat-number" id="totalFiles">0</span>
-                        <span class="stat-label">活跃文件数</span>
-                    </div>
-                </div>
-
-                <div class="manage-actions">
-                    <button class="refresh-btn" onclick="refreshUsageStats(true)">刷新统计</button>
-                    <button class="btn" style="background-color: #dc3545;"
-                        onclick="resetAllUsageStats()">重置所有统计</button>
-                </div>
-
-                <!-- 文件使用统计列表 -->
-                <div id="usageListSection">
-                    <div class="loading" id="usageLoading">正在加载使用统计...</div>
-                    <div id="usageList"></div>
-                    <!-- 分页控制 -->
-                    <div id="usagePagination" class="pagination-container" style="display: none;">
-                        <button class="pagination-btn" onclick="loadUsagePreviousPage()" id="usagePrevPageBtn" disabled>
-                            ← 上一页
-                        </button>
-                        <div class="pagination-info" id="usagePageInfo">第 1 页 / 共 1 页 (共 0 个文件)</div>
-                        <button class="pagination-btn" onclick="loadUsageNextPage()" id="usageNextPageBtn">
-                            下一页 →
-                        </button>
-                    </div>
-                </div>
-
-                <!-- 使用说明 -->
-                <div class="config-group">
-                    <h4>使用说明</h4>
-                    <div class="config-info">
-                        <strong>统计范围：</strong>
-                        <ul>
-                            <li><strong>Gemini 2.5 Pro 调用次数：</strong>仅统计 gemini-2.5-pro 及其变体模型的成功调用</li>
-                            <li><strong>所有模型调用次数：</strong>统计所有模型的成功调用总数</li>
-                            <li><strong>每日配额：</strong>默认每日配额 Gemini 2.5 Pro: 100次，所有模型: 1000次</li>
-                            <li><strong>配额重置：</strong>每天 UTC 07:00 自动重置调用计数</li>
-                        </ul>
-
-                        <strong>注意：</strong>
-                        <ul>
-                            <li>只统计返回正常响应的API调用，报错的调用不计入统计</li>
-                            <li>统计数据持久化保存在 creds_state.toml 文件中</li>
-                            <li>支持每个凭证文件独立统计和配额管理</li>
-                        </ul>
-                    </div>
-                </div>
                 </div>
                 <!-- 凭证统计子标签页结束 -->
 
@@ -7232,130 +7194,25 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
         let usageStatsData = {};
         let currentEditingFile = '';
 
-        // 刷新使用统计
+        // 刷新使用统计 - 已禁用
         async function refreshUsageStats(forceRefresh = false) {
-            const usageLoading = document.getElementById('usageLoading');
-            const usageList = document.getElementById('usageList');
-
-            try {
-                // 检查缓存（除非强制刷新）
-                if (!forceRefresh && isCacheValid('usageStats')) {
-                    console.log('使用缓存数据（使用统计）');
-                    const cachedData = getCache('usageStats');
-                    usageStatsData = cachedData.statsData;
-
-                    // 使用缓存数据渲染
-                    document.getElementById('totalApiCalls').textContent = cachedData.aggregatedData.total_all_model_calls || 0;
-                    document.getElementById('geminiProCalls').textContent = cachedData.aggregatedData.total_gemini_2_5_pro_calls || 0;
-                    document.getElementById('totalFiles').textContent = cachedData.aggregatedData.total_files || 0;
-
-                    currentUsagePage = 1;
-                    renderUsageList();
-
-                    usageLoading.style.display = 'none';
-                    return;
-                }
-
-                usageLoading.style.display = 'block';
-                usageList.innerHTML = '';
-
-                console.log('从服务器获取最新数据（使用统计）...');
-
-                // 获取所有文件的使用统计
-                const [statsResponse, aggregatedResponse] = await Promise.all([
-                    fetch('/usage/stats', {
-                        method: 'GET',
-                        headers: getAuthHeaders()
-                    }),
-                    fetch('/usage/aggregated', {
-                        method: 'GET',
-                        headers: getAuthHeaders()
-                    })
-                ]);
-
-                const statsData = await statsResponse.json();
-                const aggregatedData = await aggregatedResponse.json();
-
-                if (statsResponse.ok && aggregatedResponse.ok) {
-                    // 保存到缓存
-                    setCache('usageStats', {
-                        statsData: statsData.data,
-                        aggregatedData: aggregatedData.data
-                    });
-                    usageStatsData = statsData.data;
-
-                    // 更新概览统计
-                    document.getElementById('totalApiCalls').textContent = aggregatedData.data.total_all_model_calls || 0;
-                    document.getElementById('geminiProCalls').textContent = aggregatedData.data.total_gemini_2_5_pro_calls || 0;
-                    document.getElementById('totalFiles').textContent = aggregatedData.data.total_files || 0;
-
-                    // 重置到第一页
-                    currentUsagePage = 1;
-
-                    // 渲染使用统计列表
-                    renderUsageList();
-
-                    showStatus(`已加载 ${aggregatedData.data.total_files} 个文件的使用统计`, 'success');
-                } else {
-                    showStatus('加载使用统计失败', 'error');
-                }
-            } catch (error) {
-                console.error('refreshUsageStats error:', error);
-                showStatus(`网络错误: ${error.message}`, 'error');
-            } finally {
-                usageLoading.style.display = 'none';
-            }
+            // 凭证统计功能已禁用，此函数保留以避免前端报错
+            console.log('凭证统计功能已禁用');
         }
 
-        // 渲染使用统计列表（带分页）
+        // 渲染使用统计列表 - 已禁用
         function renderUsageList() {
-            const usageList = document.getElementById('usageList');
-            const pagination = document.getElementById('usagePagination');
-            usageList.innerHTML = '';
-
-            if (Object.keys(usageStatsData).length === 0) {
-                usageList.innerHTML = '<p style="text-align: center; color: #666;">暂无使用统计数据</p>';
-                pagination.style.display = 'none';
-                return;
-            }
-
-            // 转换为数组并分页
-            const usageArray = Object.entries(usageStatsData);
-            const totalPages = Math.ceil(usageArray.length / itemsPerUsagePage);
-            const startIndex = (currentUsagePage - 1) * itemsPerUsagePage;
-            const endIndex = startIndex + itemsPerUsagePage;
-            const currentPageData = usageArray.slice(startIndex, endIndex);
-
-            // 渲染当前页的凭证卡片
-            for (const [filename, stats] of currentPageData) {
-                const card = createUsageCard(filename, stats);
-                usageList.appendChild(card);
-            }
-
-            // 更新分页控制
-            if (totalPages > 1) {
-                pagination.style.display = 'flex';
-                document.getElementById('usagePageInfo').textContent = `第 ${currentUsagePage} 页 / 共 ${totalPages} 页 (共 ${usageArray.length} 个文件)`;
-                document.getElementById('usagePrevPageBtn').disabled = currentUsagePage <= 1;
-                document.getElementById('usageNextPageBtn').disabled = currentUsagePage >= totalPages;
-            } else {
-                pagination.style.display = 'none';
-            }
+            // 凭证统计功能已禁用
         }
 
-        // 加载凭证统计上一页
+        // 加载凭证统计上一页 - 已禁用
         function loadUsagePreviousPage() {
-            if (currentUsagePage > 1) {
-                currentUsagePage--;
-                renderUsageList();
-                // 滚动到列表顶部
-                document.getElementById('usageListSection').scrollIntoView({ behavior: 'smooth' });
-            }
+            // 凭证统计功能已禁用
         }
 
-        // 加载凭证统计下一页
+        // 加载凭证统计下一页 - 已禁用
         function loadUsageNextPage() {
-            const totalPages = Math.ceil(Object.keys(usageStatsData).length / itemsPerUsagePage);
+            // 凭证统计功能已禁用
             if (currentUsagePage < totalPages) {
                 currentUsagePage++;
                 renderUsageList();

@@ -508,29 +508,6 @@ class AntigravityCredentialManager:
                         log.error("Only one account available and series is banned")
                         return None
 
-            # 检查配额（如果提供了模型名称）
-            if model_name and self._current_credential_account:
-                virtual_filename = self._credential_accounts[self._current_credential_index]["virtual_filename"]
-
-                # 检查配额
-                from .antigravity_usage_stats import check_antigravity_quota
-                quota_available, reason = await check_antigravity_quota(virtual_filename, model_name)
-
-                if not quota_available:
-                    log.warning(f"Account {self._current_credential_account.get('email')} quota exhausted: {reason}")
-
-                    # 配额用尽，尝试切换到下一个账号
-                    if len(self._credential_accounts) > 1:
-                        log.info("Rotating to next account due to quota limit")
-                        await self._rotate_credential()
-                        await self._load_current_credential()
-
-                        # 递归调用检查新账号
-                        return await self.get_valid_credential(model_name)
-                    else:
-                        log.error("Only one account available and quota exhausted")
-                        return None
-
             # 检查 token 是否过期，如果过期则刷新
             if self._current_credential_account:
                 if self._is_token_expired(self._current_credential_account):

@@ -27,7 +27,6 @@ from config import (
 from .httpx_client import http_client, create_streaming_client_with_kwargs
 from log import log
 from .credential_manager import CredentialManager
-from .usage_stats import record_successful_call
 from .utils import get_user_agent
 
 
@@ -668,11 +667,6 @@ def _handle_streaming_response_managed(
                 if not success_recorded:
                     if current_file and credential_manager:
                         await credential_manager.record_api_call_result(current_file, True)
-                        # 记录到使用统计
-                        try:
-                            await record_successful_call(current_file, model_name)
-                        except Exception as e:
-                            log.debug(f"Failed to record usage statistics: {e}")
                     success_recorded = True
 
                 payload = chunk[len("data: ") :]
@@ -723,11 +717,6 @@ async def _handle_non_streaming_response(
             # 记录成功响应
             if current_file and credential_manager:
                 await credential_manager.record_api_call_result(current_file, True)
-                # 记录到使用统计
-                try:
-                    await record_successful_call(current_file, model_name)
-                except Exception as e:
-                    log.debug(f"Failed to record usage statistics: {e}")
 
             raw = await resp.aread()
             google_api_response = raw.decode("utf-8")
