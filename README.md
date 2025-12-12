@@ -35,7 +35,7 @@
 
 ---
 
-## 控制面板演示网址：https://gcli2api-9xbf.onrender.com 密码：pwd
+## 控制面板演示网址：https://sukaka.ai6.me/ 密码：123456
 
 ## 核心功能
 
