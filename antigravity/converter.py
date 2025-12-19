@@ -289,7 +289,8 @@ def generate_request_body(
     model_name: str,
     parameters: Dict[str, Any],
     openai_tools: Optional[List[Dict[str, Any]]] = None,
-    system_instruction: str = "你是一个有帮助的 AI 助手。"
+    system_instruction: str = "你是一个有帮助的 AI 助手。",
+    project_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     生成完整的 Google Antigravity API 请求体
@@ -317,8 +318,9 @@ def generate_request_body(
         model_name == 'gpt-oss-120b-medium'
     )
 
-    # 去除 -thinking 后缀
-    actual_model_name = model_name[:-9] if model_name.endswith('-thinking') else model_name
+    # 保留完整模型名（不去除 -thinking 后缀）
+    # 因为某些模型如 claude-opus-4-5-thinking 需要完整名称发给 API
+    actual_model_name = model_name
 
     # 应用模型别名映射（用户友好名称 -> API内部名称）
     actual_model_name = ANTIGRAVITY_MODEL_ALIAS.get(actual_model_name, actual_model_name)
@@ -327,9 +329,9 @@ def generate_request_body(
     antigravity_messages = openai_messages_to_antigravity(openai_messages)
     antigravity_tools = convert_openai_tools_to_antigravity(openai_tools)
 
-    # 构建请求体
+    # 构建请求体（使用传入的 project_id，如果没有则随机生成）
     request_body = {
-        'project': generate_project_id(),
+        'project': project_id if project_id else generate_project_id(),
         'requestId': generate_request_id(),
         'request': {
             'contents': antigravity_messages,

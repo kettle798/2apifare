@@ -733,13 +733,17 @@ async def handle_antigravity_request(request_data: ChatCompletionRequest):
                         # 增加调用计数
                         ant_cred_mgr.increment_call_count()
 
+                        # 获取凭证中的 project_id
+                        project_id = account.get("project_id")
+
                         # 生成 Antigravity 请求体
                         antigravity_payload = generate_request_body(
                             openai_messages=openai_messages,
                             model_name=base_model,
                             parameters=parameters,
                             openai_tools=openai_tools,
-                            system_instruction=system_instruction
+                            system_instruction=system_instruction,
+                            project_id=project_id,
                         )
 
                         stream_id = f"chatcmpl-ant-{int(time.time() * 1000)}"

@@ -258,12 +258,12 @@ PUBLIC_API_MODELS = ["gemini-2.5-flash-image", "gemini-2.5-flash-image-preview"]
 # ============================================================================
 
 # Antigravity 基础模型列表（从 Google Antigravity API 获取）
+# 注意：claude-opus-4-5 不存在，只有 claude-opus-4-5-thinking
 ANTIGRAVITY_BASE_MODELS = [
     "claude-sonnet-4-5",
     "claude-sonnet-4-5-thinking",
-    "gemini-2.5-flash-lite",
-    "claude-opus-4-5",
     "claude-opus-4-5-thinking",
+    "gemini-2.5-flash-lite",
     "gemini-2.5-flash",
     "gemini-2.5-flash-thinking",
     "gemini-2.5-computer-use-preview-10-2025",  # 内部名称: rev19-uic3-1p

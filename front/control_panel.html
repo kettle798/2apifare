@@ -7729,7 +7729,7 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
 
                 // 分为 Core 和 Lite & Experimental 组
                 const coreModels = antigravityModels.filter(m =>
-                    m.name.includes('gemini-3-pro') || m.name.includes('claude-sonnet-4-5')
+                    m.name.includes('gemini-3-pro') || m.name.includes('claude-sonnet-4-5') || m.name.includes('claude-opus-4-5')
                 );
                 const liteModels = antigravityModels.filter(m =>
                     m.name.includes('flash') || m.name.includes('gpt-oss') || m.name.includes('rev19') || m.name.includes('computer-use')
@@ -7891,9 +7891,9 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
             const name = modelName.toLowerCase();
 
             // Antigravity 模型
-            // Antigravity 模型
             if (name.includes('gemini-3-pro-high')) return 'Benchmark Leader · LiveCodeBench 2439';
             if (name.includes('gemini-3-pro-low')) return 'Balanced High-Performance';
+            if (name.includes('claude-opus-4-5-thinking')) return 'Opus Thinking · Top-Tier Reasoning';
             if (name.includes('claude-sonnet-4-5-thinking')) return 'Chain of Thought · Reasoning++';
             if (name.includes('claude-sonnet-4-5')) return 'SWE-Bench Excellence (77.2%)';
             if (name.includes('gemini-2.5-flash-thinking')) return 'Lightweight Reasoning Model';
