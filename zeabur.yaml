@@ -37,7 +37,7 @@ spec:
         魔改项目地址：https://github.com/axibayuit-a11y/2apifare
         源项目地址：https://github.com/su-kaka/gcli2api
     services:
-        - name: 2apifare
+        - name: gcli2api
           template: PREBUILT
           spec:
               source:
