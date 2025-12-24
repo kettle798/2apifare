@@ -874,7 +874,8 @@ class IPManager:
             today_date = datetime.now(china_tz).strftime("%Y-%m-%d")
 
             total_ips = len(all_ips)
-            active_ips = sum(1 for ip_data in all_ips.values() if ip_data.get("status") == "active")
+            # 活跃IP = 今天有请求的IP数量（today_date等于今天）
+            active_ips = sum(1 for ip_data in all_ips.values() if ip_data.get("today_date") == today_date)
             banned_ips = sum(1 for ip_data in all_ips.values() if ip_data.get("status") == "banned")
             rate_limited_ips = sum(
                 1 for ip_data in all_ips.values() if ip_data.get("status") == "rate_limited"
