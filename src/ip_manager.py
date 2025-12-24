@@ -411,6 +411,11 @@ class IPManager:
             ip_data["today_requests"] = ip_data.get("today_requests", 0) + 1  # 今日请求+1
             ip_data["last_request_time"] = time.time()
             ip_data["last_seen"] = datetime.now(UTC_PLUS_8).strftime("%Y-%m-%d %H:%M:%S")
+            
+            # 更新全局总请求数（独立计数，不受 IP 清理影响）
+            if "global_stats" not in self._ip_cache:
+                self._ip_cache["global_stats"] = {"total_requests": 0}
+            self._ip_cache["global_stats"]["total_requests"] = self._ip_cache["global_stats"].get("total_requests", 0) + 1
 
             # 记录 User-Agent
             if user_agent and user_agent not in ip_data.get("user_agents", []):
@@ -874,7 +879,8 @@ class IPManager:
             rate_limited_ips = sum(
                 1 for ip_data in all_ips.values() if ip_data.get("status") == "rate_limited"
             )
-            total_requests = sum(ip_data.get("total_requests", 0) for ip_data in all_ips.values())
+            # 使用全局计数器（不受 IP 清理影响）
+            total_requests = self._ip_cache.get("global_stats", {}).get("total_requests", 0)
             # 只统计今天的请求（检查today_date是否是今天）
             today_requests = sum(
                 ip_data.get("today_requests", 0) 
