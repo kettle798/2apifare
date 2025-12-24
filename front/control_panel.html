@@ -2160,24 +2160,26 @@
                 margin-bottom: 8px;
             }
 
-            /* IP 统计容器 - 手机端 2 行 3 个 */
+            /* IP 统计容器 - 手机端 2 行 3 个，使用 grid 布局 */
             #ipStatsContainer {
-                display: grid;
-                grid-template-columns: repeat(3, 1fr);
-                gap: 8px;
+                display: grid !important;
+                grid-template-columns: repeat(3, 1fr) !important;
+                gap: 8px !important;
             }
 
             #ipStatsContainer .stat-item {
-                padding: 10px 8px;
+                padding: 12px 10px !important;
                 min-width: 0;
+                flex: none !important;
+                max-width: none !important;
             }
 
             #ipStatsContainer .stat-number {
-                font-size: 18px;
+                font-size: 22px !important;
             }
 
             #ipStatsContainer .stat-label {
-                font-size: 10px;
+                font-size: 11px !important;
             }
 
             /* 使用统计 - 统计项单行显示 */
@@ -2199,35 +2201,6 @@
             #usageStatsContainer .stat-label {
                 font-size: 10px !important;       /* 更小标签 */
                 white-space: nowrap;              /* 不换行 */
-            }
-
-            /* IP 统计 - 分两行显示（3+2布局） */
-            #ipStatsContainer {
-                flex-direction: row !important;   /* 横向排列 */
-                flex-wrap: wrap !important;       /* 允许换行 */
-                gap: 4px !important;
-            }
-
-            #ipStatsContainer .stat-item {
-                flex: 0 0 32%;                    /* 第一行3个，32%确保能放下 */
-                max-width: 32%;
-                padding: 8px 4px !important;
-                box-sizing: border-box !important; /* 确保边框内计算 */
-            }
-
-            #ipStatsContainer .stat-item:nth-child(4),
-            #ipStatsContainer .stat-item:nth-child(5) {
-                flex: 0 0 48%;                    /* 第二行2个，48%确保能放下 */
-                max-width: 48%;
-            }
-
-            #ipStatsContainer .stat-number {
-                font-size: 20px !important;
-            }
-
-            #ipStatsContainer .stat-label {
-                font-size: 10px !important;
-                white-space: nowrap;
             }
 
             /* 文件管理 - 凭证类型统计容器垂直排列 */
@@ -2940,29 +2913,21 @@
                 font-size: 9px !important;        /* 更小标签 */
             }
 
-            /* IP 统计 - 超小屏幕更紧凑 */
+            /* IP 统计 - 超小屏幕保持 grid 布局 */
             #ipStatsContainer {
-                gap: 3px !important;              /* 更小间距 */
+                gap: 6px !important;              /* 适当间距 */
             }
 
             #ipStatsContainer .stat-item {
-                flex: 0 0 32% !important;         /* 第一行3个，32%确保能放下 */
-                max-width: 32% !important;
-                padding: 6px 2px !important;      /* 更小 */
-            }
-
-            #ipStatsContainer .stat-item:nth-child(4),
-            #ipStatsContainer .stat-item:nth-child(5) {
-                flex: 0 0 48% !important;         /* 第二行2个，48%确保能放下 */
-                max-width: 48% !important;
+                padding: 10px 6px !important;     /* 适当内边距 */
             }
 
             #ipStatsContainer .stat-number {
-                font-size: 18px !important;       /* 更小数字 */
+                font-size: 20px !important;       /* 适当数字大小 */
             }
 
             #ipStatsContainer .stat-label {
-                font-size: 9px !important;        /* 更小标签 */
+                font-size: 10px !important;       /* 适当标签大小 */
             }
 
             /* 分页控件 - 超小屏幕极致紧凑 */
