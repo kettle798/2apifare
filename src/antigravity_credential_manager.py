@@ -409,7 +409,7 @@ class AntigravityCredentialManager:
                     oauth_endpoint,
                     headers={
                         "Host": oauth_host,
-                        "User-Agent": ANTIGRAVITY_USER_AGENT,
+                        "User-Agent": "Go-http-client/1.1",
                         "Accept-Encoding": "gzip"
                         # httpx 会自动设置 Content-Type: application/x-www-form-urlencoded
                     },
@@ -528,9 +528,10 @@ class AntigravityCredentialManager:
                 if not self._credential_accounts:
                     return None
 
-            # [FIX] 防止死循环：如果已检查账号数超过总账号数，说明所有账号都不可用
-            if _checked_count >= len(self._credential_accounts):
-                log.error(f"All {len(self._credential_accounts)} Antigravity accounts checked, none available for model {model_name}")
+            # [FIX] 防止死循环：使用固定上限而不是动态长度
+            # 因为 _credential_accounts 长度会随着禁用而减小，动态比较会导致跳过账号
+            if _checked_count >= 1000:
+                log.error(f"Max attempts (1000) reached in get_valid_credential, stopping recursion")
                 return None
 
             # 检查是否需要轮换（基于调用次数）
@@ -635,9 +636,10 @@ class AntigravityCredentialManager:
                 f"Marked Antigravity credential error: {virtual_filename}, error_code={error_code}"
             )
 
-            # 特殊处理 429 错误：临时封禁系列（不禁用账号，只是暂时不用该系列）
+            # 特殊处理 429 错误：根据用户要求，直接永久禁用账号
             if error_code == 429:
-                await self._handle_429_series_ban(virtual_filename, error_message)
+                log.warning(f"[429] Rate limit exceeded, PERMANENTLY disabling account: {virtual_filename}")
+                await self.disable_credential(virtual_filename)
                 return
 
             # ============ 401 错误：可能是 token 过期，不立即禁用 ============
