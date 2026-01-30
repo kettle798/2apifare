@@ -12,6 +12,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import DEFAULT_SAFETY_SETTINGS
+from src.utils import ANTIGRAVITY_USER_AGENT
 
 
 def generate_request_id() -> str:
@@ -345,12 +346,10 @@ def generate_request_body(
                     'mode': 'VALIDATED'
                 }
             },
-            'generationConfig': generate_generation_config(parameters, enable_thinking, actual_model_name),
-            'safetySettings': DEFAULT_SAFETY_SETTINGS,  # 添加安全设置，全部关闭过滤
-            'sessionId': generate_session_id()
+            'generationConfig': generate_generation_config(parameters, enable_thinking, actual_model_name)
         },
         'model': actual_model_name,
-        'userAgent': 'antigravity'
+        'userAgent': ANTIGRAVITY_USER_AGENT
     }
 
     return request_body

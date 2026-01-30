@@ -18,9 +18,11 @@ from log import log
 from .storage_adapter import get_storage_adapter
 from antigravity.converter import generate_project_id
 
-# Google OAuth 客户端信息（与 antigravity2api-nodejs 保持一致）
-CLIENT_ID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
-CLIENT_SECRET = "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"
+from src.utils import (
+    ANTIGRAVITY_CLIENT_ID as CLIENT_ID,
+    ANTIGRAVITY_CLIENT_SECRET as CLIENT_SECRET,
+    ANTIGRAVITY_USER_AGENT
+)
 
 
 def _parse_duration_to_seconds(duration_str: str) -> int:
@@ -407,11 +409,11 @@ class AntigravityCredentialManager:
                     oauth_endpoint,
                     headers={
                         "Host": oauth_host,
-                        "User-Agent": "Go-http-client/1.1",
-                        "Content-Type": "application/x-www-form-urlencoded",
+                        "User-Agent": ANTIGRAVITY_USER_AGENT,
                         "Accept-Encoding": "gzip"
+                        # httpx 会自动设置 Content-Type: application/x-www-form-urlencoded
                     },
-                    data=urlencode(data)
+                    data=data  # 直接传入字典，httpx 会自动处理编码
                 )
 
                 if response.status_code == 200:
