@@ -5,7 +5,7 @@ CLI_VERSION = "0.1.5"  # Match current gemini-cli version
 # ====================== User Agent Configuration ======================
 
 GEMINICLI_USER_AGENT = f"GeminiCLI/{CLI_VERSION} (Windows; AMD64)"
-ANTIGRAVITY_USER_AGENT = "antigravity/1.15.8 (Windows; AMD64)"
+ANTIGRAVITY_USER_AGENT = "antigravity/2.0.0 (Windows; AMD64)"
 
 
 def get_user_agent():
