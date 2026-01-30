@@ -698,7 +698,9 @@ async def handle_antigravity_request(request_data: ChatCompletionRequest):
                 for attempt in range(max_retries):
                     try:
                         # 获取有效凭证（每次重试都重新获取）
+                        log.info(f"[DEBUG] Attempt {attempt + 1}/{max_retries}: Getting valid credential...")
                         credential_result = await ant_cred_mgr.get_valid_credential(model_name=request_data.model)
+                        log.info(f"[DEBUG] Credential result: {credential_result is not None}")
                         if not credential_result:
                             error_msg = "当前无可用 Antigravity 凭证，请去控制台添加"
                             log.error(error_msg)
@@ -752,6 +754,7 @@ async def handle_antigravity_request(request_data: ChatCompletionRequest):
                         success = True
                         error_code = None
 
+                        log.info(f"[DEBUG] About to call stream_generate_content for {account.get('email')}")
                         async for chunk in stream_generate_content(antigravity_payload, access_token, proxy):
                             # 检测工具调用
                             if chunk.get('type') == 'tool_calls':

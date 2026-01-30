@@ -5997,7 +5997,27 @@ docker run -e GCLI_CREDS_1='{"client_id":"..."}' \
             // 构建邮箱显示
             let emailInfo = '';
             if (credInfo.user_email) {
-                emailInfo = `<div class="cred-email" style="font-size: 12px; color: #666; margin-top: 2px;">${credInfo.user_email}</div>`;
+                // 邮箱脱敏处理：显示为 s1mplegg1***@gmail.com
+                let displayedEmail = credInfo.user_email;
+                try {
+                    const parts = credInfo.user_email.split('@');
+                    if (parts.length === 2) {
+                        const username = parts[0];
+                        const domain = parts[1];
+                        if (username.length > 3) {
+                             // 保留前面部分，隐藏最后3位
+                             const visiblePart = username.substring(0, username.length - 3);
+                             displayedEmail = `${visiblePart}***@${domain}`;
+                        } else {
+                             // 用户名长度<=3时，全掩盖
+                             displayedEmail = `***@${domain}`;
+                        }
+                    }
+                } catch(e) {
+                    console.warn("Failed to mask email:", e);
+                }
+
+                emailInfo = `<div class="cred-email" style="font-size: 12px; color: #666; margin-top: 2px;">${displayedEmail}</div>`;
             } else {
                 emailInfo = `<div class="cred-email" style="font-size: 12px; color: #999; margin-top: 2px; font-style: italic;">未获取邮箱</div>`;
             }

@@ -404,7 +404,7 @@ class AntigravityCredentialManager:
             oauth_host = parsed_url.netloc
 
             # 发送刷新请求
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(timeout=10) as client:
                 response = await client.post(
                     oauth_endpoint,
                     headers={
@@ -522,87 +522,91 @@ class AntigravityCredentialManager:
         Returns:
             Dict with 'account' and 'virtual_filename' keys, or None if no valid credential
         """
-        async with self._operation_lock:
-            if not self._credential_accounts:
-                await self._discover_credentials()
+        # 使用循环代替递归，避免死锁
+        max_attempts = len(self._credential_accounts) + 1 if self._credential_accounts else 10
+        
+        for attempt in range(max_attempts):
+            log.debug(f"[get_valid_credential] attempt {attempt + 1}/{max_attempts}, model={model_name}")
+            
+            async with self._operation_lock:
                 if not self._credential_accounts:
-                    return None
+                    log.info("[DEBUG] No credential_accounts, discovering...")
+                    await self._discover_credentials()
+                    if not self._credential_accounts:
+                        log.error("[DEBUG] Still no credentials after discovery")
+                        return None
 
-            # [FIX] 防止死循环：使用固定上限而不是动态长度
-            # 因为 _credential_accounts 长度会随着禁用而减小，动态比较会导致跳过账号
-            if _checked_count >= 1000:
-                log.error(f"Max attempts (1000) reached in get_valid_credential, stopping recursion")
-                return None
+                # 检查是否需要轮换（基于调用次数）
+                if await self._should_rotate():
+                    await self._rotate_credential()
 
-            # 检查是否需要轮换（基于调用次数）
-            if await self._should_rotate():
-                await self._rotate_credential()
+                # 如果当前没有加载凭证，加载第一个
+                if not self._current_credential_account:
+                    await self._load_current_credential()
 
-            # 如果当前没有加载凭证，加载第一个
-            if not self._current_credential_account:
-                await self._load_current_credential()
+                # 检查并处理 projectId（自动生成或验证）
+                if self._current_credential_account:
+                    await self._ensure_project_id(self._current_credential_account)
 
-            # 检查并处理 projectId（自动生成或验证）
-            if self._current_credential_account:
-                await self._ensure_project_id(self._current_credential_account)
-
-            # 检查系列级临时封禁（如果提供了模型名称）
-            if model_name and self._current_credential_account:
-                is_banned = await self._check_series_ban(self._current_credential_account, model_name)
+                current_account = self._current_credential_account
+                current_index = self._current_credential_index
+                credential_accounts = self._credential_accounts
+            
+            # 检查系列级临时封禁（在锁外执行，避免死锁）
+            if model_name and current_account:
+                is_banned = await self._check_series_ban(current_account, model_name)
 
                 if is_banned:
                     # 系列被封禁，切换到下一个账号
-                    if len(self._credential_accounts) > 1:
-                        log.info(f"Rotating to next account due to series ban (checked {_checked_count + 1}/{len(self._credential_accounts)})")
-                        await self._rotate_credential()
-                        await self._load_current_credential()
-
-                        # 递归调用检查新账号，增加检查计数
-                        return await self.get_valid_credential(model_name, _checked_count + 1)
+                    if len(credential_accounts) > 1:
+                        log.info(f"Rotating to next account due to series ban (attempt {attempt + 1}/{max_attempts})")
+                        async with self._operation_lock:
+                            await self._rotate_credential()
+                            await self._load_current_credential()
+                        continue  # 继续循环检查下一个账号
                     else:
                         log.error("Only one account available and series is banned")
                         return None
 
             # 检查 token 是否过期，如果过期则刷新
-            if self._current_credential_account:
-                if self._is_token_expired(self._current_credential_account):
+            if current_account:
+                if self._is_token_expired(current_account):
                     log.info("Current token expired, refreshing...")
 
-                    refresh_success = await self._refresh_access_token(self._current_credential_account)
+                    refresh_success = await self._refresh_access_token(current_account)
 
                     if not refresh_success:
                         # 刷新失败，禁用当前账号并尝试下一个
-                        log.warning(f"Failed to refresh token for {self._current_credential_account.get('email')}, disabling account")
+                        log.warning(f"Failed to refresh token for {current_account.get('email')}, disabling account")
 
-                        virtual_filename = self._credential_accounts[self._current_credential_index]["virtual_filename"]
+                        virtual_filename = credential_accounts[current_index]["virtual_filename"]
                         await self.disable_credential(virtual_filename)
 
                         # 重新加载凭证列表
-                        await self._discover_credentials()
+                        async with self._operation_lock:
+                            await self._discover_credentials()
 
-                        if not self._credential_accounts:
-                            log.error("No valid Antigravity credentials remaining after refresh failure")
-                            return None
+                            if not self._credential_accounts:
+                                log.error("No valid Antigravity credentials remaining after refresh failure")
+                                return None
 
-                        # 尝试下一个账号
-                        await self._load_current_credential()
-
-                        if self._current_credential_account:
-                            # 递归调用以确保新账号也是有效的，增加检查计数
-                            return await self.get_valid_credential(model_name, _checked_count + 1)
-                        else:
-                            return None
+                            # 尝试下一个账号
+                            await self._load_current_credential()
+                        
+                        continue  # 继续循环检查下一个账号
 
             # 返回当前凭证
-            if self._current_credential_account:
-                return {
-                    "account": self._current_credential_account,
-                    "virtual_filename": self._credential_accounts[self._current_credential_index][
-                        "virtual_filename"
-                    ],
-                }
+            if current_account:
+                async with self._operation_lock:
+                    return {
+                        "account": self._current_credential_account,
+                        "virtual_filename": self._credential_accounts[self._current_credential_index][
+                            "virtual_filename"
+                        ],
+                    }
 
-            return None
+        log.error(f"Max attempts ({max_attempts}) reached in get_valid_credential")
+        return None
 
     def increment_call_count(self):
         """增加调用计数"""
@@ -892,6 +896,9 @@ class AntigravityCredentialManager:
                     # [FIX] 标记账号无资格并禁用，避免重复尝试
                     account['has_antigravity_access'] = False
                     
+                    # 保存状态到存储
+                    await self._save_account_to_storage(account)
+                    
                     # 查找并禁用该账号
                     for cred_entry in self._credential_accounts:
                         if cred_entry.get('account', {}).get('email') == email:
@@ -914,6 +921,8 @@ class AntigravityCredentialManager:
                 # 验证失败，使用随机 projectId 作为降级方案（可能会失败）
                 account['project_id'] = generate_project_id()
                 log.warning(f"[Fallback] Using random projectId due to API error: {account['project_id']}")
+                # 保存到存储，避免下次启动重复请求导致死循环
+                await self._save_account_to_storage(account)
 
     async def _fetch_project_id_from_api(self, account: Dict[str, Any]) -> Optional[str]:
         """
@@ -949,39 +958,124 @@ class AntigravityCredentialManager:
             api_host = parsed_url.netloc
 
             # 调用 loadCodeAssist API
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                headers = {
+                    'Host': api_host,
+                    'User-Agent': 'antigravity/1.11.9 windows/amd64',
+                    'Authorization': f"Bearer {account['access_token']}",
+                    'Content-Type': 'application/json',
+                    'Accept-Encoding': 'gzip'
+                }
+                
                 response = await client.post(
                     load_code_assist_url,
-                    headers={
-                        'Host': api_host,
-                        'User-Agent': 'antigravity/1.11.9 windows/amd64',
-                        'Authorization': f"Bearer {account['access_token']}",
-                        'Content-Type': 'application/json',
-                        'Accept-Encoding': 'gzip'
-                    },
+                    headers=headers,
                     json={'metadata': {'ideType': 'ANTIGRAVITY'}}
                 )
 
-            if response.status_code == 200:
-                data = response.json()
-                project_id = data.get('cloudaicompanionProject')
-                return project_id
-
-            elif response.status_code == 403:
-                log.warning(f"Account {account.get('email')} has no permission (403)")
-                return None
-
-            elif response.status_code == 404:
-                log.warning(f"Account {account.get('email')} not found (404)")
-                return None
-
-            else:
-                log.error(f"Unexpected status code {response.status_code}: {response.text}")
-                return None
+                if response.status_code == 200:
+                    data = response.json()
+                    # 检查是否有Project ID
+                    project_id = data.get('cloudaicompanionProject')
+                    if project_id:
+                        return project_id
+                    
+                    # 检查是否有 currentTier (表示用户已激活但可能没有Project ID?)
+                    if data.get("currentTier"):
+                        log.info(f"Account {account.get('email')} is activated but no project_id, retrying onboardUser")
+                    
+                    # 尝试 fallback 到 onboardUser
+                    log.info(f"loadCodeAssist success but no project_id, attempting onboardUser for {account.get('email')}")
+                    return await self._try_onboard_user(base_url, headers, client)
+                    
+                else:
+                    log.warning(f"loadCodeAssist failed ({response.status_code}), falling back to onboardUser for {account.get('email')}")
+                    return await self._try_onboard_user(base_url, headers, client)
 
         except Exception as e:
             log.error(f"Error fetching projectId: {e}")
             raise
+
+    async def _try_onboard_user(self, base_url: str, headers: dict, client: httpx.AsyncClient) -> Optional[str]:
+        """尝试通过 onboardUser 获取 project_id"""
+        try:
+            # 获取 Tier
+            tier_id = await self._get_onboard_tier(base_url, headers, client)
+            if not tier_id:
+                return None
+            
+            # 构造 onboardUser 请求
+            onboard_url = f"{base_url}:onboardUser"
+            # 必须使用正确的 Host 头
+            from urllib.parse import urlparse
+            onboard_host = urlparse(onboard_url).netloc
+            headers['Host'] = onboard_host
+            
+            request_body = {
+                "tierId": tier_id,
+                "metadata": {
+                    "ideType": "ANTIGRAVITY",
+                    "platform": "PLATFORM_UNSPECIFIED",
+                    "pluginType": "GEMINI"
+                }
+            }
+            
+            # 轮询 (max 3次, 间隔2秒, timeout 5s per request)
+            for attempt in range(3):
+                # 注意：client 已经在外部上下文，可以直接用
+                resp = await client.post(onboard_url, headers=headers, json=request_body)
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("done"):
+                        response_data = data.get("response", {})
+                        # 可能是一个对象或字符串
+                        project_obj = response_data.get("cloudaicompanionProject", {})
+                        if isinstance(project_obj, dict):
+                            return project_obj.get("id")
+                        elif isinstance(project_obj, str):
+                            return project_obj
+                        
+                        log.warning("[onboardUser] Operation done but no project ID in response")
+                        return None
+                    
+                    # 还在进行中
+                    await asyncio.sleep(2)
+                    continue
+                else:
+                    log.warning(f"[onboardUser] HTTP {resp.status_code}: {resp.text[:200]}")
+                    return None
+                    
+            return None
+            
+        except Exception as e:
+            log.error(f"Error in onboardUser: {e}")
+            return None
+
+    async def _get_onboard_tier(self, base_url: str, headers: dict, client: httpx.AsyncClient) -> Optional[str]:
+        """获取用户 Tier"""
+        try:
+            url = f"{base_url}:loadCodeAssist"
+            # 修正 Host
+            from urllib.parse import urlparse
+            host = urlparse(url).netloc
+            headers['Host'] = host
+            
+            resp = await client.post(
+                url, 
+                headers=headers, 
+                json={'metadata': {'ideType': 'ANTIGRAVITY'}}
+            )
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                for tier in data.get("allowedTiers", []):
+                    if tier.get("isDefault"):
+                        return tier.get("id")
+                return "LEGACY"
+            return None
+        except Exception:
+            return None
 
     async def disable_credential(self, virtual_filename: str):
         """禁用凭证"""

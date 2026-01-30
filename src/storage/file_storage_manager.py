@@ -795,7 +795,7 @@ class FileStorageManager:
                                     # disabled 字段
                                     if 'disabled' in account:
                                         state_data['disabled'] = account['disabled']
-                                        log.info(f"Account {user_id} state - disabled: {account['disabled']}, email: {account.get('email')}")
+                                        log.debug(f"Account {user_id} state - disabled: {account['disabled']}, email: {account.get('email')}")
                                     else:
                                         log.debug(f"Account {user_id} missing 'disabled' field, using False")
                                         state_data['disabled'] = False

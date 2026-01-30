@@ -128,8 +128,9 @@ async def get_config_value(key: str, default: Any = None, env_var: Optional[str]
 # Configuration getters - all async
 async def get_proxy_config():
     """Get proxy configuration."""
-    proxy_url = await get_config_value("proxy", env_var="PROXY")
-    return proxy_url if proxy_url else None
+    # proxy_url = await get_config_value("proxy", env_var="PROXY")
+    # return proxy_url if proxy_url else None
+    return None # 临时禁用代理，测试全局模式
 
 
 async def get_calls_per_rotation() -> int:
@@ -245,6 +246,7 @@ async def get_retry_429_interval() -> float:
 # GeminiCLI 基础模型列表
 BASE_MODELS = [
     "gemini-3-pro-preview",
+    "gemini-3-flash",
     "gemini-2.5-pro",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
@@ -269,6 +271,8 @@ ANTIGRAVITY_BASE_MODELS = [
     "gemini-2.5-computer-use-preview-10-2025",  # 内部名称: rev19-uic3-1p
     "gemini-3-pro-high",
     "gemini-3-pro-low",
+    "gemini-3-pro-preview",
+    "gemini-3-flash",
     "gpt-oss-120b-medium",
 ]
 

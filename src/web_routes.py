@@ -1961,22 +1961,54 @@ async def websocket_logs(websocket: WebSocket):
 # ==================== IP 统计功能 ====================
 
 
+
+def mask_ip_address(ip: str) -> str:
+    """
+    对 IP 地址进行脱敏处理
+    保留前三段(IPv4)或第一段(IPv6)
+    """
+    if not ip:
+        return ""
+    if "." in ip:  # IPv4
+        parts = ip.split(".")
+        if len(parts) == 4:
+            return f"{parts[0]}.{parts[1]}.{parts[2]}.***"
+    elif ":" in ip:  # IPv6
+        parts = ip.split(":")
+        if len(parts) > 1:
+            return f"{parts[0]}:****:****:****"
+    return ip
+
+
 @router.get("/ip/stats")
 async def get_ip_statistics(ip: Optional[str] = None, token: str = Depends(verify_token)):
     """
     获取 IP 统计信息
-
+    
     Args:
         ip: 可选的 IP 地址，如果提供则只返回该 IP 的统计
-
+        
     Returns:
-        IP 统计数据
+        IP 统计数据（已脱敏）
     """
     try:
         from .ip_manager import get_ip_manager
 
         ip_manager = await get_ip_manager()
         stats = await ip_manager.get_ip_stats(ip)
+
+        # 对 IP 进行脱敏处理
+        if ip:
+            # 单个 IP 查询，stats 是数据字典，不需要处理 key
+            # 但如果数据内部有 ip 字段也需要处理（目前 ip_stats 结构中没有 ip 字段，只有 key 是 ip）
+            pass
+        else:
+            # 所有 IP 查询，stats 是 {ip: data} 字典
+            masked_stats = {}
+            for ip_addr, data in stats.items():
+                masked_ip = mask_ip_address(ip_addr)
+                masked_stats[masked_ip] = data
+            stats = masked_stats
 
         return JSONResponse(content={"success": True, "data": stats})
     except Exception as e:

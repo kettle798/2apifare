@@ -7,11 +7,13 @@ import httpx
 from typing import Dict, Any, Optional, AsyncGenerator, Callable
 from urllib.parse import urlparse
 import logging
+import uuid
+from src.utils import ANTIGRAVITY_USER_AGENT
 
 log = logging.getLogger("antigravity.client")
 
 # User Agent 配置
-USER_AGENT = "antigravity/1.11.3 windows/amd64"
+USER_AGENT = ANTIGRAVITY_USER_AGENT
 
 
 def extract_host_from_url(url: str) -> str:
@@ -41,13 +43,21 @@ async def _stream_generate_content_single(
         {'type': 'text'|'thinking'|'tool_calls', 'content': str, 'tool_calls': [...]}
     """
     api_host = extract_host_from_url(api_url)
+    model_name = request_body.get("model", "")
+
+    # 判断 requestType
+    if "image" in model_name.lower():
+        request_type = "image_gen"
+    else:
+        request_type = "agent"
 
     headers = {
-        'Host': api_host,
         'User-Agent': USER_AGENT,
         'Authorization': f'Bearer {access_token}',
         'Content-Type': 'application/json',
-        'Accept-Encoding': 'gzip'
+        'Accept-Encoding': 'gzip',
+        'requestId': f"req-{uuid.uuid4()}",
+        'requestType': request_type
     }
 
     thinking_started = False
@@ -59,6 +69,7 @@ async def _stream_generate_content_single(
         client_kwargs['proxy'] = proxy
 
     async with httpx.AsyncClient(**client_kwargs) as client:
+        log.info(f"[Antigravity] Sending request to {api_url}, model={model_name}, proxy={proxy}")
         async with client.stream('POST', api_url, json=request_body, headers=headers) as response:
             # 检查响应状态
             if response.status_code == 403:
